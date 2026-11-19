@@ -94,6 +94,7 @@ const DECLARED: &[Declared] = &[
         approvals: Given::NotYet("its headless profile asks nothing of the host, and no run has checked whether an approval request reaches us"),
         mid_turn_notes: Given::No,
     },
+    Declared { id: "pi", path: Path::Argv, tool_server: Given::No, approvals: Given::No, mid_turn_notes: Given::No },
     // Any other CLI: the prompt as its last argument, its output streamed as text.
     Declared {
         id: "plain",

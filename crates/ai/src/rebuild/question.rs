@@ -113,14 +113,14 @@ pub fn ask(
     };
     let (mut conv, mut from, builder_session): (Box<dyn Conversation>, AnsweredFrom, Option<String>) = match entry.config.kind {
         BackendKind::AgentCli => {
-            let session = ws.manifest.agent_session_for_mode(&entry.config.model, deep).map(str::to_string);
+            // Only an adapter that forks the builder's session for questions can answer from a
+            // copy of that chat; adapters whose questions start fresh (Copilot ACP, Pi) use files.
+            let fork_session = crate::cli_agents::adapter_for(&entry.config.model).questions_fork_session();
+            let session = fork_session.then(|| ws.manifest.agent_session_for_mode(&entry.config.model, deep).map(str::to_string)).flatten();
             if let Some(id) = session.as_deref() {
                 bring_back_session(ws, &entry, id);
             }
-            // Only a native adapter that resumes can answer from a copy of the builder's chat.
-            // Copilot's ACP question starts fresh, even when the project has a saved session id.
-            let native_session = crate::cli_agents::adapter_for(&entry.config.model).resumes();
-            let from = answered_from(session.as_deref(), native_session);
+            let from = answered_from(session.as_deref(), fork_session);
             let builder_session = session.clone();
             let spec = CliSpec {
                 question: true,

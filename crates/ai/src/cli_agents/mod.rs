@@ -56,6 +56,7 @@ pub const KNOWN: &[(&str, &str, &str)] = &[
     ("aider", "aider", "Aider"),
     ("dsh", "dsh", "DeepSeek Harness"),
     ("devin", "devin", "Devin"),
+    ("pi", "pi", "Pi"),
 ];
 
 pub fn program_for(agent: &str) -> String {
@@ -575,6 +576,8 @@ pub struct StreamParser {
     pub session_missing: bool,
     /// A protocol fact about the failed turn, independent of the text shown to the person.
     pub failure: Option<TurnFailure>,
+    /// Deferred failure text held until settlement confirms the turn did not recover.
+    pub provisional_error: Option<String>,
     /// Claude Code said the plan's limit refused this turn: which limit (`five_hour`,
     /// `seven_day`…) and when it resets, in Unix seconds.
     pub plan_limit: Option<(String, Option<u64>)>,
@@ -624,8 +627,15 @@ impl StreamParser {
             saw_result: false,
             session_missing: false,
             failure: None,
+            provisional_error: None,
             plan_limit: None,
         }
+    }
+
+    /// Flush any deferred turn error if the stream ended cleanly without settling.
+    pub fn finish(&mut self) -> Vec<AgentEvent> {
+        let adapter = self.adapter.clone();
+        adapter.finish(self)
     }
 
     /// Events for one output line.
@@ -1016,7 +1026,8 @@ fn run_cli(spec: &CliSpec, text: &str, retry: bool, tx: &Sender<AgentEvent>, sto
     }
     // An access mode this agent can't hold (Clean room, for one whose reads we can't check) is
     // refused before anything else starts.
-    if let Err(e) = adapter.validate_access(access_for(spec.builder.is_some(), spec.deep, spec.question)) {
+    let access = access_for(spec.builder.is_some(), spec.deep, spec.question);
+    if let Err(e) = adapter.validate_access(access) {
         let _ = tx.send(AgentEvent::Error { message: e.message, remediation: e.remediation, log: None });
         return nothing_done(&name);
     }
@@ -1035,7 +1046,7 @@ fn run_cli(spec: &CliSpec, text: &str, retry: bool, tx: &Sender<AgentEvent>, sto
         let _ = tx.send(event);
         return nothing_done(&name);
     }
-    if let Err(e) = adapter.validate_model(&spec.config, &spec.options, spec.project.as_deref(), stop) {
+    if let Err(e) = adapter.validate_model_for_access(&spec.config, &spec.options, spec.project.as_deref(), access, stop) {
         let event = if e.code == ErrorCode::Cancelled {
             AgentEvent::Status { text: "Stopped.".into() }
         } else {
@@ -1227,7 +1238,15 @@ fn run_cli(spec: &CliSpec, text: &str, retry: bool, tx: &Sender<AgentEvent>, sto
         proc = proc.stdin_bytes(adapter.stdin_text(&preamble, text));
     }
     let result = proc.run();
-    let p = parser.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut p = parser.lock().unwrap_or_else(PoisonError::into_inner);
+    if result.as_ref().is_ok_and(|out| out.success) {
+        for e in p.finish() {
+            let _ = tx.send(e);
+        }
+        if let Some(failed) = p.failure {
+            *failure.lock().unwrap_or_else(PoisonError::into_inner) = Some(failed);
+        }
+    }
     if p.session_missing {
         // The id it reported is the one it couldn't find: the next message starts a new session.
         *session.lock().unwrap_or_else(PoisonError::into_inner) = None;
@@ -3585,7 +3604,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
         reg.register(Arc::new(EchoAgent));
         assert_eq!(
             format!("{reg:?}"),
-            r#"["claude-code", "codex", "gemini-cli", "opencode", "antigravity", "hermes", "maki", "aider", "copilot", "grok", "dsh", "devin", "echo-agent"]"#
+            r#"["claude-code", "codex", "gemini-cli", "opencode", "antigravity", "hermes", "maki", "aider", "copilot", "grok", "dsh", "devin", "pi", "echo-agent"]"#
         );
     }
 
