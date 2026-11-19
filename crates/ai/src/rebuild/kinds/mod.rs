@@ -82,6 +82,8 @@ pub struct BriefCx<'a> {
     /// The builder can look at pictures (an agent app opens them with its Read tool). One that
     /// can't (the API loop) is never sent to open a screenshot; it's told what to use instead.
     pub sees_pictures: bool,
+    /// Classification of a local target so Deep mode names the matching inspection tools.
+    pub(crate) inspection: super::study::LocalInspection,
 }
 
 /// The words the app uses for a kind's result.

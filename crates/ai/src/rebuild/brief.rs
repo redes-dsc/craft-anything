@@ -217,26 +217,75 @@ pub(super) fn assets_note(ws: &Workspace, image_model: Option<&str>) -> String {
     )
 }
 
-/// Sent once when a Deep-mode build turn ended without decompiling anything.
-pub(super) const DECOMPILE_FIRST: &str = "You haven't decompiled anything yet, and Deep mode requires it. Do it now: open the original's main program with core_target_open, find the functions behind what you built (native_strings_find for names, settings and messages, then follow the references), and read each with native_function_pseudocode, waiting for every result. Put the real values, formulas and rules into app/MECHANICS.md with their function addresses, change the build to use them, and build it again.";
+/// Sent once when a Deep-mode build turn ended without inspecting the original's code.
+pub(super) fn decompile_first(inspection: super::study::LocalInspection) -> &'static str {
+    match inspection {
+        super::study::LocalInspection::Managed { il_only: true } => {
+            "You haven't inspected the .NET code yet, and Deep mode requires it. Do it now: open the original's main assembly with core_target_open, inspect it with managed_assembly_show, and read the classes and methods behind what you built using managed_members_list with include_il=true. Put the real values, formulas and rules into app/MECHANICS.md with their type and method names, change the build to use them, and build it again."
+        }
+        super::study::LocalInspection::Managed { il_only: false } => {
+            "You haven't inspected the .NET or native code yet, and Deep mode requires it. Do it now: open the original's main assembly with core_target_open, inspect the managed classes and methods with managed_members_list (include_il=true) and any native functions with native_function_pseudocode, waiting for every result. Put the real values, formulas and rules into app/MECHANICS.md with their sources, change the build to use them, and build it again."
+        }
+        super::study::LocalInspection::Java => {
+            "You haven't inspected the Java bytecode yet, and Deep mode requires it. Do it now: open the original's main archive with core_target_open, locate the classes behind what you built with java_classes_find, and inspect their methods with java_method_show or java_class_show (decompile=true). Put the real values, formulas and rules into app/MECHANICS.md with their class and method names, change the build to use them, and build it again."
+        }
+        super::study::LocalInspection::Android => {
+            "You haven't inspected the Android code yet, and Deep mode requires it. Do it now: open the original's APK or DEX with core_target_open, find the classes behind what you built with android_classes_find, and read their bytecode with android_method_show (or native_function_pseudocode for native libraries). Put the real values, formulas and rules into app/MECHANICS.md with their sources, change the build to use them, and build it again."
+        }
+        super::study::LocalInspection::Electron => {
+            "You haven't inspected the Electron application's code yet, and Deep mode requires it. Do it now: map the app with js_app_map and recover readable sources with js_sources_restore (or js_source_locate). Put the real values, formulas and rules into app/MECHANICS.md with their module names, change the build to use them, and build it again."
+        }
+        super::study::LocalInspection::Native | super::study::LocalInspection::ArchiveOrFolder => {
+            "You haven't decompiled anything yet, and Deep mode requires it. Do it now: open the original's main program with core_target_open, find the functions behind what you built (native_strings_find for names, settings and messages, then follow the references), and read each with native_function_pseudocode, waiting for every result. Put the real values, formulas and rules into app/MECHANICS.md with their function addresses, change the build to use them, and build it again."
+        }
+    }
+}
 
-/// Deep mode: decompiling the target is required, not optional, before anything is estimated.
+/// Deep mode: inspecting the target's code is required, not optional, before anything is estimated.
 /// `game`: point at a game's mechanics rather than the requested features.
-pub(super) fn decompile_note(game: bool, ghidra: bool) -> String {
-    let what = if game {
-        "the code behind movement, aiming and firing, damage and health, and how enemies behave (native_strings_find for weapon names, settings or console variables, then follow the references to the functions)"
-    } else {
-        "the code behind the features the person asked for (native_strings_find for their words, messages and settings, then follow the references to the functions)"
-    };
-    let mut s = format!(
-        "\n- Deep mode is on: decompile the program before you estimate anything. Open its main program with core_target_open, find {what}, and read each with native_function_pseudocode. Write the constants, formulas and rules you find into app/MECHANICS.md with their function addresses, and mark a value \"estimated\" only after you looked for it in the code. Then write your own code from that sheet: never paste decompiled code into app/."
-    );
-    s.push_str(if ghidra {
+pub(super) fn decompile_note(game: bool, ghidra: bool, inspection: super::study::LocalInspection) -> String {
+    let domain = if game { "movement, aiming and firing, damage and health, and how enemies behave" } else { "the features the person asked for" };
+    match inspection {
+        super::study::LocalInspection::Managed { il_only: true } => format!(
+            "\n- Deep mode is on: inspect the .NET assembly before you estimate anything. Open it with core_target_open, check managed_assembly_show, and read the classes and IL methods behind {domain} with managed_members_list (include_il=true). Write the constants, formulas and rules you find into app/MECHANICS.md with their type and method names, and mark a value \"estimated\" only after you looked for it in the assembly. Then write your own code from that sheet: never paste decompiled code into app/."
+        ),
+        super::study::LocalInspection::Managed { il_only: false } => {
+            let mut s = format!(
+                "\n- Deep mode is on: inspect the mixed-mode .NET program before you estimate anything. Open it with core_target_open, read the managed classes and IL methods behind {domain} with managed_members_list (include_il=true), and read any native functions with native_function_pseudocode. Write the constants, formulas and rules you find into app/MECHANICS.md with their type/method names or function addresses, and mark a value \"estimated\" only after you looked for it in the code. Then write your own code from that sheet: never paste decompiled code into app/."
+            );
+            s.push_str(ghidra_note(ghidra));
+            s
+        }
+        super::study::LocalInspection::Java => format!(
+            "\n- Deep mode is on: inspect the Java program before you estimate anything. Open it with core_target_open, find the classes behind {domain} with java_classes_find, and inspect them with java_class_show (decompile=true) and java_method_show. Write the constants, formulas and rules you find into app/MECHANICS.md with their class and method names, and mark a value \"estimated\" only after you looked for it in the code. Then write your own code from that sheet: never paste decompiled code into app/."
+        ),
+        super::study::LocalInspection::Android => format!(
+            "\n- Deep mode is on: inspect the Android app before you estimate anything. Open it with core_target_open, find the classes behind {domain} with android_classes_find, and inspect them with android_method_show (or native_function_pseudocode for native .so libraries). Write the constants, formulas and rules you find into app/MECHANICS.md with their sources, and mark a value \"estimated\" only after you looked for it in the code. Then write your own code from that sheet: never paste decompiled code into app/."
+        ),
+        super::study::LocalInspection::Electron => format!(
+            "\n- Deep mode is on: inspect the Electron app before you estimate anything. Run js_app_map and js_sources_restore to read the modules behind {domain}. Write the constants, formulas and rules you find into app/MECHANICS.md with their module paths, and mark a value \"estimated\" only after you looked for it in the code. Then write your own code from that sheet: never paste the original's code into app/."
+        ),
+        super::study::LocalInspection::Native | super::study::LocalInspection::ArchiveOrFolder => {
+            let what = if game {
+                "the code behind movement, aiming and firing, damage and health, and how enemies behave (native_strings_find for weapon names, settings or console variables, then follow the references to the functions)"
+            } else {
+                "the code behind the features the person asked for (native_strings_find for their words, messages and settings, then follow the references to the functions)"
+            };
+            let mut s = format!(
+                "\n- Deep mode is on: decompile the program before you estimate anything. Open its main program with core_target_open, find {what}, and read each with native_function_pseudocode. Write the constants, formulas and rules you find into app/MECHANICS.md with their function addresses, and mark a value \"estimated\" only after you looked for it in the code. Then write your own code from that sheet: never paste decompiled code into app/."
+            );
+            s.push_str(ghidra_note(ghidra));
+            s
+        }
+    }
+}
+
+fn ghidra_note(ghidra: bool) -> &'static str {
+    if ghidra {
         " native_function_pseudocode reads the code with Ghidra, which has already analysed the program, so it answers in moments (the first call takes a minute or two while Ghidra opens it). If a call takes long, wait for it: never skip decompiling because it's slow."
     } else {
         " Ghidra isn't installed, so native_function_pseudocode uses the built-in decompiler, which is rougher: check each value against a second function or the program's files before you trust it."
-    });
-    s
+    }
 }
 
 /// Where the extractor lists what it took out (under app/).
@@ -271,7 +320,7 @@ pub(super) const PRIVATE_USE_NOTE: &str = "This build contains the original game
 /// Clean room copies none of its files. `generated`: the person chose generated assets, so new
 /// models and pictures replace the original's art (in Deep mode its sounds, music, fonts,
 /// animations and maps are still used).
-pub(super) fn game_steps(deep: bool, ghidra: bool, has_target: bool, generated: bool, sees: bool) -> String {
+pub(super) fn game_steps(deep: bool, ghidra: bool, has_target: bool, generated: bool, sees: bool, inspection: super::study::LocalInspection) -> String {
     let mut s = String::from(
         "Making it play like the original:\n\
          - Start app/MECHANICS.md: every number that shapes how it plays. Movement (walk and run speed, acceleration, friction, air control, jump height, gravity, crouch), camera (field of view, mouse sensitivity), each weapon (damage, fire rate, magazine, reload time, spread, recoil, range), health and armour, respawn, scoring, modes, timers, and how computer players behave. Next to each value say where it came from (a file in the game's folder, a function address or evidence id) or mark it \"estimated\". Build from that sheet and keep it up to date.\n\
@@ -281,7 +330,7 @@ pub(super) fn game_steps(deep: bool, ghidra: bool, has_target: bool, generated: 
     s.push_str(super::kinds::mechanics::MECHANICS_CONTRACT);
     if has_target {
         if deep {
-            s.push_str(&decompile_note(true, ghidra));
+            s.push_str(&decompile_note(true, ghidra, inspection));
         } else {
             s.push_str(&format!(
                 "\n- Clean room is on: don't open, read, list or decompile the game's files or code. Work from the person's description, {} any documentation they give, and mark the numbers you estimate. If exact values matter, tell the person they can switch on Deep mode.",

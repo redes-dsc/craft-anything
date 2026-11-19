@@ -151,7 +151,7 @@ impl TargetKind for GameKind {
         if cx.ws.manifest.own_project() {
             return generated.then(|| assets_note(cx.ws, cx.image_model)).into_iter().collect();
         }
-        let mut s = vec![game_steps(cx.deep, cx.ghidra, matches!(target, TargetRef::Local { .. }), generated, cx.sees_pictures)];
+        let mut s = vec![game_steps(cx.deep, cx.ghidra, matches!(target, TargetRef::Local { .. }), generated, cx.sees_pictures, cx.inspection)];
         if generated {
             s.push(assets_note(cx.ws, cx.image_model));
         }

@@ -916,7 +916,9 @@ impl Worker {
         let ghidra = s.settings.ghidra_launcher().is_some();
         let image_model = s.settings.assets.image_model.clone();
         drop(s);
-        let cx = BriefCx { ws, deep, ghidra, editor: self.editor.as_deref(), assets: self.assets, image_model: image_model.as_deref(), sees_pictures };
+        let inspection = study::inspection_for(&ws.manifest.target, kind);
+        let cx =
+            BriefCx { ws, deep, ghidra, editor: self.editor.as_deref(), assets: self.assets, image_model: image_model.as_deref(), sees_pictures, inspection };
         // The project's settings as they are now, for an agent that carries on its session.
         let now = || kind.follow_up_sections(&cx).iter().map(|s| format!("\n\n{s}")).collect::<String>() + &pictures_reminder(ws, sees_pictures);
         let mut prompt = match &opts.message {
@@ -1042,7 +1044,7 @@ impl Worker {
                 }
                 if !reminded && needs_decompile_reminder(deep, &ws.manifest) {
                     reminded = true;
-                    prompt = DECOMPILE_FIRST.to_string();
+                    prompt = decompile_first(inspection).to_string();
                     continue;
                 }
             }
@@ -1332,6 +1334,8 @@ impl Worker {
     }
 
     fn converse_turn(&mut self, ws: &mut Workspace, agent: &mut dyn Conversation, text: &str, retry: bool) -> Result<String, ToolError> {
+        let studies_folder = self.self_check.as_ref().is_some_and(|(k, _)| k.studies_folder());
+        let inspection = study::inspection_for_target(&ws.manifest.target, studies_folder);
         if retry {
             agent.retry(text);
         } else {
@@ -1367,8 +1371,8 @@ impl Worker {
                         }
                     }
                     // Decided on the tool's own id (its CLI and `mcp__…__` names included).
-                    AgentEvent::ToolStarted { tool, .. }
-                        if self.engine.registry().canonical(tool) == Some(craft_anything_engine::tools::native_function::PSEUDOCODE_TOOL) =>
+                    AgentEvent::ToolStarted { tool, input, .. }
+                        if self.engine.registry().canonical(tool).is_some_and(|id| study::tool_marks_decompiled(id, input, inspection)) =>
                     {
                         ws.manifest.decompiled = true
                     }

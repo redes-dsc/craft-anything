@@ -3,6 +3,100 @@
 
 use super::*;
 
+/// How Deep mode inspects a local target's code and whether Ghidra applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum LocalInspection {
+    #[default]
+    Native,
+    Managed {
+        il_only: bool,
+    },
+    Java,
+    Android,
+    Electron,
+    ArchiveOrFolder,
+}
+
+impl LocalInspection {
+    /// Ghidra only helps for native code or mixed-mode .NET assemblies with native bodies.
+    pub(super) fn uses_ghidra(self) -> bool {
+        matches!(self, Self::Native | Self::Managed { il_only: false })
+    }
+}
+
+fn packaged_js(root: &Path) -> bool {
+    root.join("resources/app.asar").is_file() || root.join("package.json").is_file()
+}
+
+fn extension_fallback(path: &Path) -> LocalInspection {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+        "asar" => LocalInspection::Electron,
+        "jar" | "war" | "class" => LocalInspection::Java,
+        "apk" | "aab" | "xapk" | "dex" => LocalInspection::Android,
+        _ => LocalInspection::Native,
+    }
+}
+
+/// Classify the local program or package so Study, prompts, and decompiled tracking match its runtime.
+pub(super) fn detect_local_inspection(path: &Path, program: &Path) -> LocalInspection {
+    use craft_anything_engine::target::{Target, TargetKind};
+    use craft_anything_formats::dotnet::pe::{COMIMAGE_FLAGS_ILONLY, parse_pe};
+
+    if is_electron_runtime(program)
+        || program.extension().is_some_and(|e| e.eq_ignore_ascii_case("asar"))
+        || path.extension().is_some_and(|e| e.eq_ignore_ascii_case("asar"))
+        || (path.is_dir() && packaged_js(path))
+    {
+        return LocalInspection::Electron;
+    }
+    if program.is_dir() {
+        return LocalInspection::ArchiveOrFolder;
+    }
+    let Ok(target) = Target::load(program) else {
+        return extension_fallback(program);
+    };
+    match target.kind {
+        TargetKind::Managed => {
+            let il_only = parse_pe(&target.bytes).is_ok_and(|p| p.cli.flags & COMIMAGE_FLAGS_ILONLY != 0);
+            LocalInspection::Managed { il_only }
+        }
+        TargetKind::Jar | TargetKind::JavaClass => LocalInspection::Java,
+        TargetKind::Apk | TargetKind::Dex => LocalInspection::Android,
+        TargetKind::Asar => LocalInspection::Electron,
+        TargetKind::Directory | TargetKind::Zip => LocalInspection::ArchiveOrFolder,
+        _ => LocalInspection::Native,
+    }
+}
+
+pub(super) fn inspection_for_target(target: &TargetRef, studies_folder: bool) -> LocalInspection {
+    let TargetRef::Local { path } = target else {
+        return LocalInspection::Native;
+    };
+    let (program, _) = locate(path, studies_folder);
+    detect_local_inspection(path, &program)
+}
+
+pub(super) fn inspection_for(target: &TargetRef, kind: &dyn TargetKind) -> LocalInspection {
+    inspection_for_target(target, kind.studies_folder())
+}
+
+/// Whether a canonical Craft Anything tool call counts as deep code inspection for `inspection`.
+pub(super) fn tool_marks_decompiled(canonical_id: &str, input: &Value, inspection: LocalInspection) -> bool {
+    if canonical_id == craft_anything_engine::tools::native_function::PSEUDOCODE_TOOL {
+        return true;
+    }
+    let flag = |k: &str| input.get(k).and_then(Value::as_bool) == Some(true);
+    match inspection {
+        LocalInspection::Managed { .. } => matches!(canonical_id, "managed_members_list" if flag("include_il")),
+        LocalInspection::Java => {
+            canonical_id == "java_method_show" || canonical_id == "java_vineflower_decompile" || (canonical_id == "java_class_show" && flag("decompile"))
+        }
+        LocalInspection::Android => matches!(canonical_id, "android_method_show" | "android_jeb_decompile" | "android_dart_snapshot_show"),
+        LocalInspection::Electron => matches!(canonical_id, "js_sources_restore" | "js_source_locate" | "js_app_map"),
+        LocalInspection::Native | LocalInspection::ArchiveOrFolder => false,
+    }
+}
+
 /// An Electron program is the Chromium and Node runtime, and analysing that takes hours: the app's
 /// own logic is the JavaScript in `resources/app.asar` beside it, which the study maps (#947).
 pub(super) fn is_electron_runtime(program: &Path) -> bool {
@@ -117,7 +211,8 @@ impl Worker {
                     )?;
                     notes.push_str(&format!("\n## Ghidra\n\nNo program was found in {}, so Ghidra couldn't be used.\n", path.display()));
                 }
-                if let Some(done) = self.prepare_ghidra(&program, &ws.root) {
+                let inspection = detect_local_inspection(&path, &program);
+                if let Some(done) = self.prepare_ghidra(&program, &ws.root, inspection) {
                     // Deep mode always waits for Ghidra: the builder then decompiles with it straight away.
                     let started = std::time::Instant::now();
                     // One line: the app's progress card shows how long it has been going.
@@ -326,9 +421,10 @@ impl Worker {
     /// thread; the receiver gets its result. The builder's tools share the analysis (waiting for it
     /// rather than starting another), and it carries on if the person pauses, so nothing is lost.
     /// It stops once `project`'s record is gone: a deleted project needs it no more (#948).
-    pub(super) fn prepare_ghidra(&self, program: &Path, project: &Path) -> Option<Receiver<Result<(), String>>> {
-        // A folder (nothing in it recognised as the program) isn't something Ghidra can open.
-        if !program.is_file() || is_electron_runtime(program) {
+    pub(super) fn prepare_ghidra(&self, program: &Path, project: &Path, inspection: LocalInspection) -> Option<Receiver<Result<(), String>>> {
+        // Skip folders, Electron runtimes, IL-only .NET assemblies, and Java/Android archives:
+        // Ghidra either cannot open them or only slows down startup for managed/bytecode targets.
+        if !program.is_file() || !inspection.uses_ghidra() {
             return None;
         }
         let settings = {

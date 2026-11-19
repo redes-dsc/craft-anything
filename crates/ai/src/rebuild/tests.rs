@@ -19,7 +19,9 @@ fn kind_of(request: &str, target: &TargetRef, stack: &str) -> &'static str {
     KindRegistry::built_in().detect(request, target, stack).unwrap().id()
 }
 fn brief(ws: &Workspace, k: &str, deep: bool, ghidra: bool, editor: Option<&Path>, assets: bool, extra: Option<&str>) -> String {
-    super::brief(kind(k).as_ref(), &BriefCx { ws, deep, ghidra, editor, assets, image_model: None, sees_pictures: true }, extra)
+    let target_kind = kind(k);
+    let inspection = study::inspection_for(&ws.manifest.target, target_kind.as_ref());
+    super::brief(target_kind.as_ref(), &BriefCx { ws, deep, ghidra, editor, assets, image_model: None, sees_pictures: true, inspection }, extra)
 }
 fn refine(k: &str, check: &CheckResult) -> String {
     kind(k).refine(check, true)
@@ -682,7 +684,9 @@ fn said_to_look(text: &str) -> Option<&'static str> {
 #[test]
 fn a_builder_that_cant_see_is_never_sent_to_a_picture() {
     let sees_only = |ws: &Workspace, k: &str, deep: bool, assets: bool, sees_pictures: bool| {
-        super::brief(kind(k).as_ref(), &BriefCx { ws, deep, ghidra: false, editor: None, assets, image_model: None, sees_pictures }, None)
+        let target_kind = kind(k);
+        let inspection = study::inspection_for(&ws.manifest.target, target_kind.as_ref());
+        super::brief(target_kind.as_ref(), &BriefCx { ws, deep, ghidra: false, editor: None, assets, image_model: None, sees_pictures, inspection }, None)
     };
     let mut checked = 0;
     // Everything a sighted builder is sent, to show the guard's phrases are still what it's told.
@@ -1363,8 +1367,20 @@ fn a_registered_kind_is_chosen_from_its_words_and_brings_its_checks() {
     let ws = Workspace::create(d.path(), "Deck", "Make slides", TargetRef::None).unwrap();
     let checks = kinds.get("slides").unwrap().checks(&ws);
     assert_eq!(checks.iter().map(|c| c.id()).collect::<Vec<_>>(), ["outline"]);
-    let b =
-        super::brief(&SlidesKind, &BriefCx { ws: &ws, deep: false, ghidra: false, editor: None, assets: false, image_model: None, sees_pictures: true }, None);
+    let b = super::brief(
+        &SlidesKind,
+        &BriefCx {
+            ws: &ws,
+            deep: false,
+            ghidra: false,
+            editor: None,
+            assets: false,
+            image_model: None,
+            sees_pictures: true,
+            inspection: study::LocalInspection::Native,
+        },
+        None,
+    );
     assert!(b.contains("What to build: a slide deck."), "{b}");
 }
 
@@ -1550,7 +1566,16 @@ fn other_pages_of_the_same_site_are_picked_from_its_links() {
     // The brief mentions the other pages only when some were captured.
     let d = tempfile::tempdir().unwrap();
     let ws = Workspace::create(d.path(), "Shop", "Clone it", TargetRef::Website { url: "https://shop.example.com/".into() }).unwrap();
-    let cx = |ws| BriefCx { ws, deep: false, ghidra: false, editor: None, assets: false, image_model: None, sees_pictures: true };
+    let cx = |ws| BriefCx {
+        ws,
+        deep: false,
+        ghidra: false,
+        editor: None,
+        assets: false,
+        image_model: None,
+        sees_pictures: true,
+        inspection: study::LocalInspection::Native,
+    };
     // #1590: and it always says how to run the site without Craft Anything.
     assert_eq!(kinds::WebsiteKind.brief_sections(&cx(&ws)), [kinds::website::HOW_TO_RUN]);
     std::fs::create_dir_all(ws.capture_dir()).unwrap();
@@ -3377,7 +3402,7 @@ fn a_resumed_game_builder_hears_the_asset_choice_as_it_is_now() {
     let mut ws = Workspace::create(d.path(), "Game", "A snake game", TargetRef::None).unwrap();
     let game = kind("game");
     fn cx(ws: &Workspace, assets: bool) -> BriefCx<'_> {
-        BriefCx { ws, deep: false, ghidra: false, editor: None, assets, image_model: None, sees_pictures: true }
+        BriefCx { ws, deep: false, ghidra: false, editor: None, assets, image_model: None, sees_pictures: true, inspection: study::LocalInspection::Native }
     }
     assert!(game.follow_up_sections(&cx(&ws, true)).is_empty(), "off and never used: nothing to say");
     // Turned on after the first build, with a key: the follow-up carries the asset note and budget.
@@ -3776,6 +3801,109 @@ fn a_later_request_is_reminded_only_when_nothing_was_decompiled() {
     assert!(!needs_decompile_reminder(true, &reopened(&ws)), "decompiled in an earlier run");
     let none = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
     assert!(!needs_decompile_reminder(true, &none.manifest), "no program to decompile");
+}
+
+#[test]
+fn deep_mode_tailors_study_prompts_and_decompiled_detection_by_target_kind() {
+    use study::{LocalInspection, detect_local_inspection, tool_marks_decompiled};
+
+    let d = tempfile::tempdir().unwrap();
+    let managed = d.path().join("Sample.dll");
+    let jar = d.path().join("notes.jar");
+    let apk = d.path().join("notes.apk");
+    let asar = d.path().join("app.asar");
+    std::fs::write(&managed, craft_anything_testkit::managed::managed_assembly(1)).unwrap();
+    std::fs::write(&jar, craft_anything_testkit::java::notes_jar()).unwrap();
+    std::fs::write(&apk, craft_anything_testkit::android::notes_apk()).unwrap();
+    std::fs::write(&asar, craft_anything_testkit::electron::notes_app_asar()).unwrap();
+
+    assert_eq!(detect_local_inspection(&managed, &managed), LocalInspection::Managed { il_only: true });
+    assert_eq!(detect_local_inspection(&jar, &jar), LocalInspection::Java);
+    assert_eq!(detect_local_inspection(&apk, &apk), LocalInspection::Android);
+    assert_eq!(detect_local_inspection(&asar, &asar), LocalInspection::Electron);
+
+    assert!(!LocalInspection::Managed { il_only: true }.uses_ghidra());
+    assert!(LocalInspection::Managed { il_only: false }.uses_ghidra());
+    assert!(!LocalInspection::Java.uses_ghidra());
+    assert!(!LocalInspection::Android.uses_ghidra());
+    assert!(!LocalInspection::Electron.uses_ghidra());
+    assert!(LocalInspection::Native.uses_ghidra());
+
+    let mut session = craft_anything_engine::testing::session();
+    session.settings.deep_mode = true;
+    let fake_ghidra = d.path().join("analyzeHeadless");
+    std::fs::write(&fake_ghidra, "").unwrap();
+    session.settings.engines.ghidra.install_dir = Some(fake_ghidra);
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let mut ws = Workspace::create(d.path(), "Managed", "Rebuild it", TargetRef::Local { path: managed.clone() }).unwrap();
+    let mut w = Worker {
+        wake: Default::default(),
+        engine: Arc::new(Engine::new(session)),
+        tx,
+        stop: CancelToken::default(),
+        preview: Arc::default(),
+        seen: HashSet::new(),
+        inbox: Inbox::new(ws.inbox_dir()),
+        editor: None,
+        notes: Arc::default(),
+        feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
+        assets: false,
+        usage: None,
+        self_check: None,
+        reset_progress_after_notes: false,
+    };
+    assert!(w.prepare_ghidra(&managed, &ws.root, LocalInspection::Managed { il_only: true }).is_none());
+    assert!(w.prepare_ghidra(&jar, &ws.root, LocalInspection::Java).is_none());
+    assert!(w.prepare_ghidra(&apk, &ws.root, LocalInspection::Android).is_none());
+    assert!(w.prepare_ghidra(&asar, &ws.root, LocalInspection::Electron).is_none());
+
+    let managed_brief = brief(&ws, "app", true, true, None, false, None);
+    assert!(
+        managed_brief.contains("managed_members_list (include_il=true)")
+            && managed_brief.contains("inspect the .NET assembly before you estimate anything")
+            && !managed_brief.contains("decompile the program before you estimate anything"),
+        "{managed_brief}"
+    );
+    assert!(decompile_first(LocalInspection::Managed { il_only: true }).contains("managed_members_list"));
+    assert!(decompile_first(LocalInspection::Java).contains("java_method_show"));
+    assert!(decompile_first(LocalInspection::Android).contains("android_method_show"));
+    assert!(decompile_first(LocalInspection::Electron).contains("js_sources_restore"));
+
+    assert!(!tool_marks_decompiled("managed_members_list", &json!({"include_il": false}), LocalInspection::Managed { il_only: true }));
+    assert!(tool_marks_decompiled("managed_members_list", &json!({"include_il": true}), LocalInspection::Managed { il_only: true }));
+    assert!(tool_marks_decompiled("java_class_show", &json!({"decompile": true}), LocalInspection::Java));
+    assert!(!tool_marks_decompiled("java_class_show", &json!({"decompile": false}), LocalInspection::Java));
+    assert!(tool_marks_decompiled("android_method_show", &json!({}), LocalInspection::Android));
+    assert!(tool_marks_decompiled("js_sources_restore", &json!({}), LocalInspection::Electron));
+
+    struct InspectsManaged(bool);
+    impl Conversation for InspectsManaged {
+        fn send(&mut self, _text: &str) {}
+        fn poll(&mut self) -> Vec<AgentEvent> {
+            vec![
+                AgentEvent::ToolStarted { call_id: "1".into(), tool: "mcp__craft-anything__managed_members_list".into(), input: json!({"include_il": self.0}) },
+                AgentEvent::TurnDone {
+                    backend: "test".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    tokens_unknown: false,
+                    cost_usd: None,
+                    cost_is_estimate: false,
+                },
+            ]
+        }
+        fn answer_consent(&mut self, _call_id: &str, _allow: bool) {}
+        fn stop(&mut self) {}
+        fn is_busy(&self) -> bool {
+            false
+        }
+    }
+    w.turn(&mut ws, &mut InspectsManaged(false), "Build it.", true, None).unwrap();
+    assert!(!ws.manifest.decompiled, "listing managed members without IL does not count");
+    w.turn(&mut ws, &mut InspectsManaged(true), "Build it.", true, None).unwrap();
+    assert!(ws.manifest.decompiled, "reading managed IL marks the project decompiled");
 }
 
 #[test]
@@ -4629,7 +4757,7 @@ fn waiting_for_another_analysis(d: &Path, limit_secs: u64) -> (Worker, std::sync
 fn a_build_says_when_it_waits_for_an_analysis_started_earlier() {
     let d = tempfile::Builder::new().prefix("ca").tempdir().unwrap();
     let (w, rx, ws, program) = waiting_for_another_analysis(d.path(), 3);
-    let done = w.prepare_ghidra(&program, &ws.root).expect("deep mode with Ghidra prepares the analysis");
+    let done = w.prepare_ghidra(&program, &ws.root, study::LocalInspection::Native).expect("deep mode with Ghidra prepares the analysis");
     let _ = done.recv_timeout(Duration::from_secs(30));
     let said: Vec<String> = rx
         .try_iter()
@@ -4647,7 +4775,7 @@ fn a_build_says_when_it_waits_for_an_analysis_started_earlier() {
 fn deleting_the_project_stops_its_analysis() {
     let d = tempfile::Builder::new().prefix("ca").tempdir().unwrap();
     let (w, _rx, ws, program) = waiting_for_another_analysis(d.path(), 600);
-    let done = w.prepare_ghidra(&program, &ws.root).expect("deep mode with Ghidra prepares the analysis");
+    let done = w.prepare_ghidra(&program, &ws.root, study::LocalInspection::Native).expect("deep mode with Ghidra prepares the analysis");
     assert!(done.recv_timeout(Duration::from_secs(3)).is_err(), "the analysis goes on while the project is there");
     ws.delete().unwrap();
     let ended = done.recv_timeout(Duration::from_secs(20)).expect("deleting the project stopped the analysis");
