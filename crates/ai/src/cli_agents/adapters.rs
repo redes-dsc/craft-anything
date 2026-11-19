@@ -962,8 +962,8 @@ impl AgentAdapter for Codex {
         let args_toml = format!("[{}]", mcp_args.iter().map(|s| toml_string(s)).collect::<Vec<_>>().join(", "));
         v.extend(["-c".into(), format!("mcp_servers.{MCP_NAME}.args={args_toml}")]);
         // `codex exec` can't ask, so without this it refuses a tool not marked read-only, such as
-        // rebuild_start, before our server sees the call (#540). Only tools that ask the person
-        // themselves are approved; every other tool keeps the person's own Codex policy.
+        // rebuild_start, before our server sees the call (#540). Only tools we limit ourselves
+        // (consent, or the asset budget: #1464) are approved; the rest keep the person's policy.
         for tool in craft_anything_engine::AGENT_APP_PREAPPROVED_TOOLS {
             v.extend(["-c".into(), format!("mcp_servers.{MCP_NAME}.tools.{tool}.approval_mode=\"approve\"")]);
         }
@@ -1099,7 +1099,7 @@ pub(crate) fn codex_tool_text(item: &Value, tool: &str, ours: bool) -> String {
     // Another MCP server's refusal isn't fixed by our setup: it keeps Codex's own words.
     if ours && text.contains(CODEX_NEEDS_APPROVAL) {
         // The feed keeps 200 characters of a result, so the fix comes first and fits. Setup
-        // approves only the tools that ask the person themselves; any other is approved, or not,
+        // approves only the tools we limit ourselves; any other is approved, or not,
         // in the person's own Codex settings, and setup changes nothing for it (#1867).
         if craft_anything_engine::AGENT_APP_PREAPPROVED_TOOLS.contains(&tool) {
             return format!(

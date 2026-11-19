@@ -2098,13 +2098,20 @@ mod tests {
         assert!(pos("--mcp-config") > pos("--resume"));
     }
 
-    /// #540: only tools that ask the person themselves are approved on Codex's side.
+    /// #540, #1464: only tools we limit ourselves are approved on Codex's side: one that asks for
+    /// consent, or one that spends only within the project's asset budget.
     #[test]
-    fn every_tool_approved_for_codex_is_registered_and_asks_for_consent() {
+    fn every_tool_approved_for_codex_is_registered_and_limited_by_us() {
         let e = craft_anything_engine::Engine::shared(craft_anything_engine::testing::session(), crate::rebuild::tools::specs());
         for id in craft_anything_engine::AGENT_APP_PREAPPROVED_TOOLS {
             let spec = e.registry().get(id).unwrap_or_else(|| panic!("{id} isn't registered"));
-            assert!(spec.effects.needs_consent(), "{id} must ask for consent itself");
+            assert!(
+                spec.effects.needs_consent() || craft_anything_engine::ASSETS_SPENDING_TOOLS.contains(id),
+                "{id} must ask for consent itself or stay within the asset budget"
+            );
+        }
+        for id in craft_anything_engine::ASSETS_SPENDING_TOOLS {
+            assert!(craft_anything_engine::AGENT_APP_PREAPPROVED_TOOLS.contains(&id), "#1464: Codex refused {id}");
         }
     }
 
@@ -2202,6 +2209,7 @@ mod tests {
         // #540: `codex exec` can't ask, so the tools that ask for themselves are approved in the
         // same -c list, and nothing wider.
         assert!(a.contains(&"mcp_servers.craft-anything.tools.rebuild_start.approval_mode=\"approve\"".to_string()));
+        assert!(a.contains(&"mcp_servers.craft-anything.tools.assets_image_generate.approval_mode=\"approve\"".to_string()), "#1464");
         assert!(!a.iter().any(|x| x.contains("default_tools_approval_mode")));
         let g = build_args(adapter_for("gemini-cli").as_ref(), &BackendOptions::default(), "q", "", &mcp(), None, Access::Analyse);
         assert!(g.windows(2).any(|w| w[0] == "--output-format" && w[1] == "stream-json"));

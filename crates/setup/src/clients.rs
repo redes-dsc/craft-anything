@@ -168,7 +168,7 @@ pub enum Shape {
     WithStartupTimeout,
     /// `{command, args, startup_timeout_sec: 30, tools: {<tool>: {approval_mode: "approve"}}}`:
     /// `codex exec` can't ask, so it refuses a tool not marked read-only unless the entry approves
-    /// it (#540). Only the tools that ask the person themselves are approved
+    /// it (#540). Only the tools we limit ourselves (consent, or the asset budget) are approved
     /// ([`craft_anything_engine::AGENT_APP_PREAPPROVED_TOOLS`]); other settings in the entry are kept.
     Codex,
 }
