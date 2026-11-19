@@ -3,8 +3,10 @@
 Craft Anything is a native, pure-Rust app that shows anyone how a piece of software works (programs, apps, files,
 websites, phones) with evidence-backed answers, then helps them rebuild it. It ships a desktop app (egui), a CLI and
 an MCP server, all driven by one engine. Display name **Craft Anything**; machine names `craft-anything-*`; bundle id
-`ai.storyteller.craft-anything`. Standards shared across the Crafting Apps live in `../craftrules` (read its
-`AGENTS.md`); follow them. Apps do not depend on sibling app crates; reusable code belongs in craft-libs.
+`ai.storyteller.craft-anything`. Standards shared across the Craft apps live in
+[storytold/craft-contrib](https://github.com/storytold/craft-contrib) (`standards/house-rules-core.md` and
+`standards/house-rules-rust.md`); follow them. Apps do not depend on sibling app crates; reusable code belongs in
+craft-libs.
 
 **Original work only:** never copy code, scripts, schemas, names, assets or wording from another project, and
 never name other reverse-engineering products in source, docs, UI or commit messages.
@@ -36,7 +38,9 @@ Layering is enforced by `cargo xtask layers`. Register new crates in `xtask/src/
 
 ## Golden rules
 
-1. **Never crash** (`../craftrules/standards/never-crash.md`). Hostile input is our main input. No
+1. **Never crash** (craft-contrib's
+   [`house-rules-rust.md`](https://github.com/storytold/craft-contrib/blob/main/standards/house-rules-rust.md), rule 1).
+   Hostile input is our main input. No
    `unwrap`/`expect`/`panic!`/`todo!`/`unimplemented!`/`unreachable!`/indexing on input-derived values in non-test
    code; every production crate root carries the deny attribute. Checked arithmetic, bounded recursion, capped
    allocations. Every crash fix gets a regression test.

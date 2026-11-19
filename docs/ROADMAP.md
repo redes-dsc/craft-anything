@@ -322,6 +322,10 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       `self_cli_path` no longer found the CLI and the two rebuild tests that start it failed on
       `main` and every pull request. It now finds the CLI from that folder too
       — claimed: bflatastic, branch bugfix/r5.2-cli-in-new-build-dir
+- [x] `AGENTS.md` and `docs/releasing.md` still point at `../craftrules`, which is retired
+      (craft-contrib house rule 13: don't link to it). Point the shared standards at
+      storytold/craft-contrib and drop the private release playbook reference
+      — claimed: Fadlalla-ai, branch docs/r5.2-craft-contrib-links
 
 ### R5.3 A builder that can't make progress stops
 Owner: open · Status: todo
