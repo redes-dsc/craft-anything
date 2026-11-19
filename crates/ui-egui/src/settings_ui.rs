@@ -17,128 +17,200 @@ pub fn show(app: &mut CraftApp, ctx: &egui::Context) {
     }
     let t = Tokens::get(ctx);
     let mut open = true;
+    let frame = egui::Frame::new().fill(t.card).corner_radius(t.r_lg()).inner_margin(theme::pad::CARD).stroke(egui::Stroke::new(1.0, t.card_border));
+    let available = ctx.content_rect().size() - Vec2::splat(2.0 * theme::space::SM) - frame.total_margin().sum();
     // A modal (dimmed backdrop, Esc or a click outside closes) with a full-size close button;
     // egui's window close box is 14 px.
-    let resp = egui::Modal::new(egui::Id::new("settings-window"))
-        .frame(egui::Frame::new().fill(t.card).corner_radius(t.r_lg()).inner_margin(theme::pad::CARD).stroke(egui::Stroke::new(1.0, t.card_border)))
-        .show(ctx, |ui| {
-            ui.set_width((ctx.content_rect().width() - 2.0 * theme::space::XXL).clamp(560.0, 860.0));
-            ui.horizontal(|ui| {
-                ui.label(theme::heading(tr("Settings"), theme::SECTION));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icons::button(ui, "x", theme::ControlSize::Medium, false, "Close").clicked() {
-                        open = false;
-                    }
-                });
+    let resp = egui::Modal::new(egui::Id::new("settings-window")).frame(frame).show(ctx, |ui| {
+        let width = (ctx.content_rect().width() - 2.0 * theme::space::XXL).min(860.0).min(available.x).max(0.0);
+        ui.set_width(width);
+        ui.set_max_height(available.y.max(0.0));
+        ui.horizontal(|ui| {
+            ui.label(theme::heading(tr("Settings"), theme::SECTION));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icons::button(ui, "x", theme::ControlSize::Medium, false, "Close").clicked() {
+                    open = false;
+                }
             });
-            // An error (a save that failed) shows here too: the message bar is behind this window.
-            if let Some(i) = app.state.toasts.iter().rposition(|(_, error)| *error) {
-                let text = app.state.toasts[i].0.clone();
-                ui.add_space(theme::space::SM);
-                ui.horizontal(|ui| {
-                    icons::show(ui, "triangle-alert", theme::icon::MD, t.danger);
-                    ui.add(egui::Label::new(RichText::new(text).color(t.danger)).wrap());
-                    if icons::button(ui, "x", theme::ControlSize::Small, false, "Dismiss").clicked() {
-                        app.state.toasts.remove(i);
-                    }
-                });
-            }
-            ui.add_space(theme::space::MD);
+        });
+        ui.add_space(theme::space::MD);
+        if width < theme::breakpoint::SETTINGS_RAIL {
+            // A rail would leave too little room for a control at high zoom. The same named,
+            // focusable tabs scroll horizontally instead, without reducing the type size.
+            egui::ScrollArea::horizontal().id_salt("settings-tabs-horizontal").auto_shrink([false, true]).show(ui, |ui| {
+                ui.horizontal(|ui| tabs(app, ui, true, 0.0));
+            });
+            ui.add_space(theme::space::SM);
+            let h = page_height(ctx).min(ui.available_height()).max(0.0);
+            page(app, ui, h);
+        } else {
+            let h = page_height(ctx).min(ui.available_height()).max(0.0);
             ui.horizontal_top(|ui| {
+                ui.set_max_height(h);
                 ui.vertical(|ui| {
                     ui.set_width(150.0);
-                    for (tab, icon, title) in [
-                        (SettingsTab::General, "settings", "General"),
-                        (SettingsTab::Engines, "cpu", "Engines"),
-                        (SettingsTab::Ai, "bot", "AI"),
-                        (SettingsTab::Builds, "hammer", "Builds"),
-                        (SettingsTab::Plugins, "puzzle", "Plugins"),
-                        (SettingsTab::Safety, "shield", "Safety"),
-                        (SettingsTab::About, "info", "About"),
-                    ] {
-                        // About sits at the bottom of the list, level with the end of the page.
-                        if tab == SettingsTab::About {
-                            ui.add_space((page_height(ctx) - ui.min_rect().height() - TAB_H).max(theme::space::SM));
-                        }
-                        let on = app.state.settings_tab == tab;
-                        let (rect, r) = ui.allocate_exact_size(Vec2::new(150.0, TAB_H), egui::Sense::click());
-                        r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, tr(title)));
-                        if on {
-                            ui.painter().rect_filled(rect, t.radius, t.accent_soft);
-                        } else if r.hovered() {
-                            ui.painter().rect_filled(rect, t.radius, t.hover);
-                        }
-                        icons::paint(
-                            ui,
-                            egui::Rect::from_min_size(egui::pos2(rect.left() + 10.0, rect.center().y - 8.0), Vec2::splat(16.0)),
-                            icon,
-                            16.0,
-                            if on { t.accent_ink } else { t.icon },
-                        );
-                        ui.painter().text(
-                            egui::pos2(rect.left() + 36.0, rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            tr(title),
-                            theme::medium(theme::BODY),
-                            if on { t.text } else { t.text_dim },
-                        );
-                        if r.clicked() {
-                            app.state.settings_tab = tab;
-                            if tab == SettingsTab::Ai && app.detected.is_none() {
-                                app.detect_backends();
-                            }
-                        }
-                    }
+                    egui::ScrollArea::vertical().id_salt("settings-tabs-vertical").auto_shrink([false, false]).min_scrolled_height(h).max_height(h).show(
+                        ui,
+                        |ui| {
+                            tabs(app, ui, false, h);
+                        },
+                    );
                 });
                 ui.add_space(theme::space::SM);
                 ui.separator();
                 ui.add_space(theme::space::LG);
-                ui.vertical(|ui| {
-                    // Exactly what's left of the window, with room for the scroll bar a long tab
-                    // gets, so no tab can widen the window (#68).
-                    let w = ui.available_width();
-                    ui.set_width(w);
-                    let content_w = w - ui.spacing().scroll.allocated_width();
-                    let h = page_height(ctx);
-                    // Not shrunk to the tab's content: that gave each tab its own width and put the
-                    // scroll bar in a different place on every page.
-                    let tab = app.state.settings_tab;
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).min_scrolled_height(h).max_height(h).max_width(w).show(ui, |ui| {
-                        // The bar sits at the edge of the area, so the air between it and the
-                        // settings is taken from the settings' side.
-                        ui.set_max_width(content_w - 14.0);
-                        match tab {
-                            SettingsTab::General => general(app, ui),
-                            SettingsTab::Engines => engines(app, ui),
-                            SettingsTab::Ai => ai(app, ui),
-                            SettingsTab::Builds => builds(app, ui),
-                            SettingsTab::Plugins => plugins(app, ui),
-                            SettingsTab::Safety => safety(app, ui),
-                            SettingsTab::About => about(ui),
-                        }
-                    });
-                });
+                ui.vertical(|ui| page(app, ui, h));
             });
-        });
+        }
+    });
     if !open || resp.should_close() {
         app.state.settings_open = false;
     }
 }
 
+fn tabs(app: &mut CraftApp, ui: &mut Ui, horizontal: bool, height: f32) {
+    let t = Tokens::get(ui.ctx());
+    let id = ui.make_persistent_id("shown-settings-tab");
+    let shown = (app.state.settings_tab, horizontal, ui.ctx().content_rect().size());
+    let changed = ui.data_mut(|d| {
+        let previous = d.get_temp::<(SettingsTab, bool, Vec2)>(id);
+        d.insert_temp(id, shown);
+        previous != Some(shown)
+    });
+    let (mut selected_rect, mut focused_rect) = (None, None);
+    for (tab, icon, title) in [
+        (SettingsTab::General, "settings", "General"),
+        (SettingsTab::Engines, "cpu", "Engines"),
+        (SettingsTab::Ai, "bot", "AI"),
+        (SettingsTab::Builds, "hammer", "Builds"),
+        (SettingsTab::Plugins, "puzzle", "Plugins"),
+        (SettingsTab::Safety, "shield", "Safety"),
+        (SettingsTab::About, "info", "About"),
+    ] {
+        if !horizontal && tab == SettingsTab::About {
+            ui.add_space((height - ui.min_rect().height() - ui.spacing().item_spacing.y - TAB_H).max(theme::space::SM));
+        }
+        let id = egui::Id::new(("settings-tab", title));
+        let title = tr(title);
+        let galley = ui.painter().layout_no_wrap(title.clone(), theme::medium(theme::BODY), if app.state.settings_tab == tab { t.text } else { t.text_dim });
+        let w = if horizontal { galley.size().x + theme::icon::MD + 3.0 * theme::space::MD } else { ui.available_width() };
+        let on = app.state.settings_tab == tab;
+        let (_, rect) = ui.allocate_space(Vec2::new(w, TAB_H));
+        let r = ui.interact(rect, id, egui::Sense::click());
+        r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, &title));
+        if on {
+            ui.painter().rect_filled(rect, t.radius, t.accent_soft);
+        } else if r.hovered() {
+            ui.painter().rect_filled(rect, t.radius, t.hover);
+        }
+        icons::paint(
+            ui,
+            egui::Rect::from_center_size(egui::pos2(rect.left() + theme::space::MD + theme::icon::MD / 2.0, rect.center().y), Vec2::splat(theme::icon::MD)),
+            icon,
+            theme::icon::MD,
+            if on { t.accent_ink } else { t.icon },
+        );
+        ui.painter().galley(
+            egui::pos2(rect.left() + theme::space::MD + theme::icon::MD + theme::space::SM, rect.center().y - galley.size().y / 2.0),
+            galley,
+            t.text,
+        );
+        widgets::focus_ring(ui, &r, rect);
+        if on && changed {
+            selected_rect = Some(rect);
+        }
+        if r.gained_focus() || (r.has_focus() && changed) {
+            focused_rect = Some(rect);
+        }
+        if r.clicked() {
+            app.state.settings_tab = tab;
+            if tab == SettingsTab::Ai && app.detected.is_none() {
+                app.detect_backends();
+            }
+        }
+    }
+    // egui keeps only the last scroll request. Include both tabs when they fit; otherwise
+    // keep keyboard focus visible (the selected tab is still reachable by scrolling).
+    let target = match (selected_rect, focused_rect) {
+        (Some(selected), Some(focused)) => {
+            let both = selected.union(focused);
+            let fits = if horizontal { both.width() <= ui.clip_rect().width() } else { both.height() <= ui.clip_rect().height() };
+            Some(if fits { both } else { focused })
+        }
+        (_, Some(focused)) => Some(focused),
+        (selected, None) => selected,
+    };
+    if let Some(rect) = target {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+    }
+}
+
+fn page(app: &mut CraftApp, ui: &mut Ui, h: f32) {
+    // The page moves between responsive parents; its widgets keep the same UI identity.
+    ui.scope_builder(egui::UiBuilder::new().id(egui::Id::new("settings-page-layout")), |ui| page_content(app, ui, h));
+}
+
+fn page_content(app: &mut CraftApp, ui: &mut Ui, h: f32) {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    ui.set_width(w);
+    let content_w = (w - ui.spacing().scroll.allocated_width() - 14.0).max(0.0);
+    // A new save error starts in view, even if the person was editing near the page's end.
+    let page_id = egui::Id::new("settings-page").with((app.toast_error_revision, app.state.toasts.iter().rfind(|(_, error)| *error).map(|(text, _)| text)));
+    // Fixed bounds across tabs, with the header outside the scrolling page.
+    egui::ScrollArea::vertical().id_salt(page_id).auto_shrink([false, false]).min_scrolled_height(h).max_height(h).max_width(w).show(ui, |ui| {
+        ui.set_max_width(content_w);
+        // Save errors belong inside the bounded page too: a long error must not push Close out.
+        if let Some(i) = app.state.toasts.iter().rposition(|(_, error)| *error) {
+            let text = app.state.toasts[i].0.clone();
+            controls(ui, |ui| {
+                icons::show(ui, "triangle-alert", theme::icon::MD, t.danger);
+                ui.add(egui::Label::new(RichText::new(text).color(t.danger)).wrap());
+                if icons::button(ui, "x", theme::ControlSize::Small, false, "Dismiss").clicked() {
+                    app.state.toasts.remove(i);
+                }
+            });
+            ui.add_space(theme::space::SM);
+        }
+        match app.state.settings_tab {
+            SettingsTab::General => general(app, ui),
+            SettingsTab::Engines => engines(app, ui),
+            SettingsTab::Ai => ai(app, ui),
+            SettingsTab::Builds => builds(app, ui),
+            SettingsTab::Plugins => plugins(app, ui),
+            SettingsTab::Safety => safety(app, ui),
+            SettingsTab::About => about(ui),
+        }
+    });
+}
+
+/// Nested controls (notably dropdowns) measure a child UI before their parent can wrap it.
+/// Stack them in a narrow page so their combined widths cannot widen the dialog.
+fn controls<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    if ui.available_width() < theme::breakpoint::SETTINGS_CONTROLS { ui.vertical(add) } else { ui.horizontal_wrapped(add) }
+}
+
 fn row(ui: &mut Ui, title: &str, sub: &str, add: impl FnOnce(&mut Ui)) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal(|ui| {
+    let narrow = ui.available_width() < theme::breakpoint::SETTINGS_LABELS;
+    let labels = |ui: &mut Ui| {
+        ui.set_width(if narrow { ui.available_width() } else { 280.0 });
+        ui.label(RichText::new(tr(title)).font(theme::medium(theme::BODY)));
+        if !sub.is_empty() {
+            ui.add(egui::Label::new(RichText::new(tr(sub)).color(t.text_faint).size(theme::CAPTION).line_height(Some(theme::leading(theme::CAPTION)))).wrap());
+        }
+    };
+    if narrow {
         ui.vertical(|ui| {
-            ui.set_width(280.0);
-            ui.label(RichText::new(tr(title)).font(theme::medium(theme::BODY)));
-            if !sub.is_empty() {
-                ui.add(
-                    egui::Label::new(RichText::new(tr(sub)).color(t.text_faint).size(theme::CAPTION).line_height(Some(theme::leading(theme::CAPTION)))).wrap(),
-                );
-            }
+            ui.vertical(labels);
+            controls(ui, add);
         });
-        add(ui);
-    });
+    } else {
+        ui.horizontal(|ui| {
+            ui.vertical(labels);
+            add(ui);
+        });
+    }
     ui.add_space(theme::space::MD);
 }
 
@@ -349,7 +421,7 @@ fn engines(app: &mut CraftApp, ui: &mut Ui) {
 /// scheduled after drawing, and a failed lookup stays visible until explicitly retried.
 fn model_options_loading(ui: &mut Ui, backend: &str) {
     ui.add_enabled_ui(false, |ui| {
-        ui.horizontal_wrapped(|ui| {
+        controls(ui, |ui| {
             ui.label(tr("Context window"));
             widgets::dropdown(("model-context", backend)).selected_text(tr("Default")).show_ui(ui, |_| {});
         });
@@ -421,7 +493,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                     // where it isn't looked for (#53).
                     if b.kind == BackendKind::AgentCli && b.ssh_host.as_deref().is_none_or(|h| h.trim().is_empty()) {
                         let program = app.backend_options.get(&b.name).and_then(|o| o.command.as_ref());
-                        ui.horizontal_wrapped(|ui| {
+                        controls(ui, |ui| {
                             // The links at the caption's size, so the line reads as one.
                             ui.style_mut().override_font_id = Some(egui::FontId::proportional(theme::CAPTION));
                             let text = program.map_or_else(|| tr("Program: found automatically"), |p| trf("Program: {path}", &[("path", p)]));
@@ -436,7 +508,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                         // The saved program is gone (an update moved it): say what runs instead,
                         // and offer to save that one when it's a file of its own (#721).
                         if let Some(instead) = app.program_replaced.get(&b.name) {
-                            ui.horizontal_wrapped(|ui| {
+                            controls(ui, |ui| {
                                 ui.style_mut().override_font_id = Some(egui::FontId::proportional(theme::CAPTION));
                                 let text = trf("It isn't there any more, so {program} runs in its place.", &[("program", instead)]);
                                 ui.add(
@@ -495,7 +567,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                         let mut program = ui
                             .data_mut(|d| d.get_temp::<String>(id))
                             .unwrap_or_else(|| app.backend_options.get(&b.name).and_then(|o| o.command.clone()).unwrap_or_default());
-                        ui.horizontal_wrapped(|ui| {
+                        controls(ui, |ui| {
                             ui.label(tr("Remote program"));
                             ui.add(
                                 egui::TextEdit::singleline(&mut program).hint_text(&b.model).desired_width(200.0).frame(widgets::text_field_frame_compact(&t)),
@@ -536,7 +608,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                             pick_agent_model = Some(b.name.clone());
                         }
                     } else if let Some(current) = model_in_use {
-                        ui.horizontal_wrapped(|ui| {
+                        controls(ui, |ui| {
                             ui.add(
                                 egui::Label::new(RichText::new(trf("Model: {model}", &[("model", &current)])).color(t.text_faint).size(theme::CAPTION))
                                     .truncate(),
@@ -600,7 +672,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                             if let Some(choices) = &draft.choices {
                                 let mut changed = false;
                                 ui.add_enabled_ui(!draft.saving, |ui| {
-                                    ui.horizontal_wrapped(|ui| {
+                                    controls(ui, |ui| {
                                         ui.label(tr("Context window"));
                                         let label = draft
                                             .context
@@ -646,14 +718,14 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                 };
                 // One change at a time: jobs finish in any order, so a second change's refresh could land before the
                 // first's and Settings would show the older choice. The row waits for the saving job, as the rate does.
-                let job_id = ui.make_persistent_id(("tool-list-job", &b.name));
+                let job_id = egui::Id::new(("settings-tool-list-job", &b.name));
                 let pending_job = ui.data(|data| data.get_temp::<u64>(job_id));
                 let pending = app.jobs.running().any(|job| Some(job.id) == pending_job);
                 if !pending && pending_job.is_some() {
                     ui.data_mut(|data| data.remove::<u64>(job_id));
                 }
                 ui.add_enabled_ui(!pending, |ui| {
-                    ui.horizontal_wrapped(|ui| {
+                    controls(ui, |ui| {
                         let label = ui.label(tr("Builder's tools"));
                         widgets::dropdown(("tool-list", &b.name))
                             .selected_text(list.as_str())
@@ -670,14 +742,16 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                     });
                 });
                 let saved = app.backend_options.get(&b.name).and_then(|o| o.requests_per_minute).unwrap_or_default();
-                let id = ui.make_persistent_id(("request-rate", &b.name));
+                // Drafts and pending jobs belong to this backend, independently of the
+                // responsive parent UI or a new error's scroll-area identity.
+                let id = egui::Id::new(("settings-request-rate", &b.name));
                 let saved_text = if saved == 0 { String::new() } else { saved.to_string() };
                 let (mut text, pending_job) = ui.data(|data| data.get_temp::<(String, Option<u64>)>(id)).unwrap_or((saved_text.clone(), None));
                 let pending = app.jobs.running().any(|job| Some(job.id) == pending_job);
                 ui.add_enabled_ui(!pending, |ui| {
-                    ui.horizontal_wrapped(|ui| {
+                    controls(ui, |ui| {
                         let label = ui.label(tr("Requests per minute"));
-                        ui.add(egui::TextEdit::singleline(&mut text).hint_text("0").desired_width(90.0))
+                        ui.add(egui::TextEdit::singleline(&mut text).id(id.with("input")).hint_text("0").desired_width(90.0))
                             .labelled_by(label.id)
                             .on_hover_text(tr("Set to 0 for no limit."));
                         let rate = if text.trim().is_empty() { Some(0) } else { text.trim().parse::<u32>().ok() };
@@ -711,7 +785,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                 ui.add_enabled_ui(!app.backend_key_pending.contains(&b.name), |ui| {
                     let saved = app.backend_keys.as_ref().and_then(|keys| keys.get(&b.name).copied()) == Some(true);
                     let key = key_drafts.entry(b.name.clone()).or_default();
-                    ui.horizontal_wrapped(|ui| {
+                    controls(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::singleline(key)
                                 .password(true)
@@ -735,7 +809,7 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                 });
             }
             ui.add_space(theme::space::MD);
-            ui.horizontal_wrapped(|ui| {
+            controls(ui, |ui| {
                 if app.state.backend.as_ref() != Some(&b.name) && widgets::secondary(ui, None, "Use").clicked() {
                     pick = Some(b.name.clone());
                 }
@@ -945,13 +1019,13 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
             // different key can be used without restarting the app.
             let pastable = d.needs_key || d.suggestion.base_url.as_deref().is_some_and(craft_anything_ai::openai::is_opencode_go);
             if pastable && !configured {
-                ui.horizontal(|ui| {
+                controls(ui, |ui| {
                     let key = app.key_inputs.entry(d.suggestion.name.clone()).or_default();
                     ui.add(
                         egui::TextEdit::singleline(key)
                             .password(true)
                             .hint_text(tr("API key (stored in your system keychain)"))
-                            .desired_width(260.0)
+                            .desired_width((ui.available_width() - 18.0).clamp(0.0, 260.0))
                             .frame(widgets::text_field_frame_compact(&Tokens::get(ui.ctx()))),
                     );
                     let k = key.trim().to_string();
@@ -980,13 +1054,20 @@ pub(crate) fn server_form(app: &mut CraftApp, ui: &mut Ui) {
     let form = &mut app.server_form;
     // `width` is the text's; the compact frame adds 8 points a side and its border.
     const FRAME: f32 = 18.0;
+    let field_width = (ui.available_width() - FRAME).max(0.0);
     let field = |ui: &mut Ui, text: &mut String, hint: &str, width: f32, name: &str, secret: bool| {
-        let r = ui.add(egui::TextEdit::singleline(text).password(secret).hint_text(tr(hint)).desired_width(width).frame(widgets::text_field_frame_compact(&t)));
+        let r = ui.add(
+            egui::TextEdit::singleline(text)
+                .password(secret)
+                .hint_text(tr(hint))
+                .desired_width(width.min(field_width))
+                .frame(widgets::text_field_frame_compact(&t)),
+        );
         widgets::named(r, &tr(name));
     };
-    ui.horizontal(|ui| {
+    controls(ui, |ui| {
         field(ui, &mut form.name, "name, e.g. Studio box", 150.0, "AI name", false);
-        let w = ui.available_width() - FRAME;
+        let w = (ui.available_size_before_wrap().x - FRAME).max(120.0);
         field(ui, &mut form.address, "address, e.g. http://192.168.1.20:11434/v1", w, "Server address", false);
     });
     // A model picked from one server's list goes once the address is another, before Add can send
@@ -1002,22 +1083,22 @@ pub(crate) fn server_form(app: &mut CraftApp, ui: &mut Ui) {
     // One server at a time: pressing Add again while it's asked would only start a second wait.
     let ready = !form.name.trim().is_empty() && !form.address.trim().is_empty() && form.connecting.is_none();
     let mut add = false;
-    ui.horizontal(|ui| {
+    controls(ui, |ui| {
         field(ui, &mut form.model, "model (optional)", 150.0, "Model", false);
         // Room for the Add button after it.
-        let w = (ui.available_width() - FRAME - 90.0).max(120.0);
+        let w = (ui.available_size_before_wrap().x - FRAME - 90.0).max(120.0);
         field(ui, &mut form.key, "API key, if it needs one", w, "API key", true);
         add = widgets::primary_icon(ui, Some("plus"), "Add", ready).clicked() && ready;
     });
     // The server listed several chat models and didn't say which is loaded: the person chooses
     // (#1434). A list for another address is out of date and isn't offered.
     if let Some((address, models)) = form.choices.as_ref().filter(|(a, _)| *a == form.address.trim()) {
-        ui.horizontal(|ui| {
+        controls(ui, |ui| {
             ui.label(RichText::new(tr("This server lists several chat models. Choose one:")).color(t.text_faint).size(theme::CAPTION));
             let shown = if form.model.trim().is_empty() { tr("Choose a model") } else { form.model.clone() };
-            let r = widgets::dropdown("server-model-choice").selected_text(shown).show_ui(ui, |ui| {
+            let r = widgets::dropdown("server-model-choice").width(ui.available_size_before_wrap().x).selected_text(shown).truncate().show_ui(ui, |ui| {
                 for m in models {
-                    if widgets::menu_item(ui, form.model.trim() == m, m.as_str()).clicked() {
+                    if widgets::menu_item_truncated(ui, form.model.trim() == m, m.as_str()).on_hover_text(m).clicked() {
                         form.model = m.clone();
                         form.picked = Some((address.clone(), m.clone()));
                     }
@@ -1142,9 +1223,9 @@ fn plugins(app: &mut CraftApp, ui: &mut Ui) {
     let mut changed = false;
     for (i, p) in plugins.iter().enumerate() {
         widgets::panel(&t).show(ui, |ui| {
-            ui.horizontal(|ui| {
+            controls(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(300.0);
+                    ui.set_width(ui.available_width().min(300.0));
                     ui.label(RichText::new(p.display_name()).font(theme::medium(theme::SMALL)));
                     ui.label(RichText::new(p.place()).font(theme::mono(theme::CAPTION)).color(t.text_faint));
                     if let Some(problem) = p.problem() {
@@ -1169,9 +1250,9 @@ fn plugins(app: &mut CraftApp, ui: &mut Ui) {
     }
     for (i, p) in wasm.iter().enumerate() {
         widgets::panel(&t).show(ui, |ui| {
-            ui.horizontal(|ui| {
+            controls(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(300.0);
+                    ui.set_width(ui.available_width().min(300.0));
                     ui.label(RichText::new(p.display_name()).font(theme::medium(theme::SMALL)));
                     ui.label(RichText::new(p.path.display().to_string()).font(theme::mono(theme::CAPTION)).color(t.text_faint));
                     if let Some(problem) = p.problem() {
@@ -1198,7 +1279,7 @@ fn plugins(app: &mut CraftApp, ui: &mut Ui) {
     widgets::caption(ui, "Add a plugin");
     ui.add_space(theme::space::XS);
     let form = &mut app.state.plugin_form;
-    ui.horizontal(|ui| {
+    controls(ui, |ui| {
         let id =
             ui.add(egui::TextEdit::singleline(&mut form.id).hint_text(tr("id, e.g. docs")).desired_width(120.0).frame(widgets::text_field_frame_compact(&t)));
         widgets::named(id, "Plugin id");

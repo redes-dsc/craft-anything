@@ -1990,10 +1990,18 @@ Gaps found while using the app for real projects.
 - [x] The app's version can be seen inside it on every system: only macOS's menu bar had an About,
       and the About dialog in `home.rs` was never opened (#1300)
       — claimed: jgt87, branch feature/r2.9-show-version — PR #1301
-- [ ] Settings fits a small window at high zoom: it's 680 points wide with a page up to 560 tall,
-      so at 2× zoom in the smallest window (760×520, 380×260 points) its tab list starts off the
-      left edge and the dialog runs off the bottom. Fit the dialog to the window, with the tab
-      list scrolling when it must (found in #1301's review)
+- [x] Settings fits a small window at high zoom: the dialog, including its frame, fits the
+      viewport, with its heading and Close always in view. Narrow windows get a scrolling tab
+      strip and stacked settings; wider ones keep the left rail, which scrolls when short.
+      Pages and long save errors scroll vertically. Rendered layout tests cover all seven tabs
+      at 760×520 / 2×, 900×600 and 1440×900 in English, Turkish and German, plus keyboard
+      navigation, Close, long plugin entries and resizing. Review regressions also cover populated
+      server-model dropdowns and menus, measured translated API-key rows, repeated save failures
+      and full-app error presentation without duplicate overlays. Resize regressions retain backend
+      drafts and pending saves, keep focused tabs visible and preserve typing and tab activation
+      across rail orientation changes. Offscreen Linux checks; native
+      Windows/macOS and screen-reader runs were not verified (found in #1301's review)
+      — claimed: MacallanTheRoot, branch bugfix/r2.9-responsive-settings-dialog — PR #2148
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress

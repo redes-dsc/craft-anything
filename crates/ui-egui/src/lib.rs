@@ -573,6 +573,8 @@ pub struct CraftApp {
     pub ghidra: engine_ui::GhidraFlow,
     /// When each toast appeared, in the same order (confirmations hide after a few seconds).
     toast_at: Vec<Instant>,
+    /// Distinguish repeated error occurrences without changing the persisted toast representation.
+    pub(crate) toast_error_revision: u64,
     settings_dirty: bool,
     /// When to write the settings to disk: a moment after the last change, so typing a path
     /// saves once, not once per letter.
@@ -680,6 +682,7 @@ impl CraftApp {
             engine_flow: Default::default(),
             ghidra: Default::default(),
             toast_at: Vec::new(),
+            toast_error_revision: 0,
             settings_dirty: false,
             save_due: None,
             saving: None,
@@ -817,6 +820,9 @@ impl CraftApp {
     pub fn toast(&mut self, text: impl Into<String>, error: bool) {
         const KEPT: usize = 4;
         let text = text.into();
+        if error {
+            self.toast_error_revision = self.toast_error_revision.wrapping_add(1);
+        }
         // The same message again moves to the front instead of stacking up.
         if let Some(i) = self.state.toasts.iter().position(|(t, _)| *t == text) {
             self.state.toasts.remove(i);
@@ -2063,7 +2069,10 @@ impl CraftApp {
         if let Some(next) = self.state.toasts.iter().zip(&self.toast_at).filter(|((_, e), _)| !e).map(|(_, t)| CONFIRMATION.saturating_sub(t.elapsed())).min() {
             ctx.request_repaint_after(next);
         }
-        if self.state.toasts.is_empty() {
+        // Settings already renders errors inside its bounded page. Keep them stored for its
+        // dismissal controls (and for when Settings closes), without painting a second copy.
+        let settings_errors = self.state.settings_open && self.settings.first_run_done;
+        if self.state.toasts.iter().all(|(_, error)| settings_errors && *error) {
             return;
         }
         let t = theme::Tokens::get(ctx);
@@ -2091,6 +2100,9 @@ impl CraftApp {
                 let nudge = ((side - line) / 2.0).max(0.0);
                 let inner = width - 2.0 * theme::space::MD - 2.0;
                 for (i, (text, error)) in self.state.toasts.iter().enumerate() {
+                    if settings_errors && *error {
+                        continue;
+                    }
                     egui::Frame::new()
                         .fill(t.field)
                         .stroke(egui::Stroke::new(1.0, t.card_border))
