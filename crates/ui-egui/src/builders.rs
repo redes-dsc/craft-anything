@@ -107,12 +107,15 @@ fn detail(b: &BackendConfig) -> String {
 }
 
 impl CraftApp {
-    /// Agent apps found on this computer that aren't set up yet (they need no key).
+    /// Agent apps found on this computer that aren't set up yet (they need no key). A host from
+    /// `~/.ssh/config` is added in Settings → AI first, where it's checked; it isn't set up from
+    /// this picker.
     fn found_agents(&self) -> impl Iterator<Item = &BackendConfig> {
         self.detected
             .iter()
             .flatten()
             .filter(|d| d.suggestion.kind == BackendKind::AgentCli && !d.needs_key)
+            .filter(|d| d.suggestion.ssh_host.as_deref().is_none_or(|h| h.trim().is_empty()))
             .map(|d| &d.suggestion)
             .filter(|s| !craft_anything_ai::is_on(&self.backends, &s.name))
     }
@@ -498,4 +501,34 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::demo;
+    use craft_anything_ai::Detected;
+    use craft_anything_engine::Mode;
+
+    #[test]
+    fn an_ssh_host_is_added_in_settings_not_from_the_builder_picker() {
+        let mut app = demo::app(demo::engine(Mode::Beginner, true));
+        let agent = |name: &str, host: Option<&str>| Detected {
+            suggestion: BackendConfig {
+                name: name.into(),
+                kind: BackendKind::AgentCli,
+                model: "claude-code".into(),
+                base_url: None,
+                ssh_host: host.map(str::to_string),
+                enabled: true,
+            },
+            reason: String::new(),
+            needs_key: false,
+        };
+        app.detected = Some(vec![agent("Claude Code on pi5", Some("pi5")), agent("Claude Code", None)]);
+        let choices: Vec<String> = app.builder_choices().into_iter().map(|c| c.name).collect();
+        assert!(choices.contains(&"Claude Code".to_string()), "an agent on this computer builds: {choices:?}");
+        assert!(!choices.contains(&"Claude Code on pi5".to_string()), "an SSH host is added in Settings first: {choices:?}");
+        assert_ne!(app.default_builder().as_deref(), Some("Claude Code on pi5"), "the remote host isn't the default builder");
+    }
 }

@@ -385,7 +385,11 @@ fn remote_agents(host: String) -> Vec<Detected> {
         .map(|(id, label)| {
             let mut c = cfg(&format!("{label} on {host}"), BackendKind::AgentCli, id);
             c.ssh_host = Some(host.clone());
-            Detected { suggestion: c, reason: format!("SSH host {host} from ~/.ssh/config (check that {label} is installed there)"), needs_key: false }
+            Detected {
+                suggestion: c,
+                reason: format!("SSH host {host} from ~/.ssh/config (adding it checks that {label} is installed there)"),
+                needs_key: false,
+            }
         })
         .collect()
 }

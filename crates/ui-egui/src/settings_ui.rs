@@ -5,7 +5,7 @@ use crate::i18n::{LANGUAGES, tr, trf};
 use crate::state::SettingsTab;
 use crate::theme::{self, ThemeKind, Tokens};
 use crate::{CraftApp, Pick, icons, widgets};
-use craft_anything_ai::BackendKind;
+use craft_anything_ai::{BackendKind, BackendOptions};
 use craft_anything_engine::Mode;
 use egui::{RichText, Ui, Vec2};
 use std::path::PathBuf;
@@ -909,6 +909,9 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
     }
     for d in detected.into_iter().filter(|d| crate::detect_tabs::tab_of(d) == tab) {
         let configured = app.backends.iter().any(|b| b.name == d.suggestion.name);
+        let ssh = d.suggestion.ssh_host.as_deref().map(str::trim).filter(|h| !h.is_empty());
+        let saved = app.backend_options.get(&d.suggestion.name);
+        let options = add_options(&d.suggestion, configured, saved, app.state.remote_commands.get(&d.suggestion.name).map(String::as_str));
         widgets::panel(&t).show(ui, |ui| {
             ui.set_width(ui.available_width());
             // The buttons first, in the top right corner, then the name and reason wrapped in the
@@ -925,11 +928,11 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                 {
                     let taken = |n: &String| app.backends.iter().any(|b| &b.name == n);
                     if let Some(name) = (2..100).map(|i| format!("{} {i}", d.suggestion.name)).find(|n| !taken(n)) {
-                        app.add_backend(craft_anything_ai::BackendConfig { name, ..d.suggestion.clone() }, None);
+                        app.add_backend_with_options(craft_anything_ai::BackendConfig { name, ..d.suggestion.clone() }, options.clone(), None);
                     }
                 }
             } else if !d.needs_key && widgets::primary(&mut right_ui, "Add").clicked() {
-                app.add_backend(d.suggestion.clone(), None);
+                app.add_backend_with_options(d.suggestion.clone(), options.clone(), None);
             }
             let right = right_ui.min_rect();
             // Nothing on the right (a key to paste below instead): the text takes the whole width.
@@ -941,6 +944,22 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
                 egui::Label::new(RichText::new(&d.reason).color(t.text_faint).size(theme::CAPTION).line_height(Some(theme::leading(theme::CAPTION)))).wrap(),
             );
             ui.advance_cursor_after_rect(left_ui.min_rect().union(right));
+            // A host from ~/.ssh/config may run the agent under another name or path: give it
+            // before adding, so the check runs that command instead of the usual one.
+            if let Some(host) = ssh
+                && d.suggestion.kind == BackendKind::AgentCli
+            {
+                ui.add_space(theme::space::XS);
+                let usual = craft_anything_ai::cli_agents::program_for(&d.suggestion.model);
+                let saved = app.backend_options.get(&d.suggestion.name).and_then(|options| options.command.clone());
+                let command = app.state.remote_commands.entry(d.suggestion.name.clone()).or_insert_with(|| saved.unwrap_or_default());
+                ui.add(
+                    egui::TextEdit::singleline(command)
+                        .hint_text(trf("{program} (or its path on {host})", &[("program", &usual), ("host", host)]))
+                        .desired_width(320.0)
+                        .frame(widgets::text_field_frame(&t)),
+                );
+            }
             // A subscription key is worth pasting even when the environment already has one, so a
             // different key can be used without restarting the app.
             let pastable = d.needs_key || d.suggestion.base_url.as_deref().is_some_and(craft_anything_ai::openai::is_opencode_go);
@@ -1308,11 +1327,49 @@ pub(crate) fn settings_not_saved(e: &craft_anything_engine::evidence::ToolError)
     said
 }
 
+/// The options a suggestion is added with. An SSH agent uses the command typed for it (else its
+/// usual program); another account of a configured one keeps that backend's saved options, and a
+/// command typed for it wins. Other suggestions have no options of their own.
+fn add_options(config: &craft_anything_ai::BackendConfig, configured: bool, saved: Option<&BackendOptions>, command: Option<&str>) -> BackendOptions {
+    let command = command.map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+    if configured {
+        let mut options = saved.cloned().unwrap_or_default();
+        if let Some(command) = command {
+            options.command = Some(command);
+        }
+        return options;
+    }
+    let ssh = config.ssh_host.as_deref().is_some_and(|h| !h.trim().is_empty());
+    if config.kind == BackendKind::AgentCli && ssh { BackendOptions { command, ..Default::default() } } else { BackendOptions::default() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Done, builders::AgentModelPicker, demo, jobs::Finished};
     use craft_anything_ai::{BackendConfig, BackendKind};
+
+    /// The command typed for an SSH agent is what gets added and checked; another account keeps the
+    /// configured command, and a local agent has none.
+    #[test]
+    fn an_ssh_agent_adds_with_the_command_typed_for_it() {
+        let ssh = BackendConfig {
+            name: "Claude on box".into(),
+            kind: BackendKind::AgentCli,
+            model: "claude-code".into(),
+            base_url: None,
+            ssh_host: Some("box".into()),
+            enabled: true,
+        };
+        assert_eq!(add_options(&ssh, false, None, Some(" /opt/claude ")).command.as_deref(), Some("/opt/claude"));
+        assert!(add_options(&ssh, false, None, None).command.is_none());
+        assert!(add_options(&ssh, false, None, Some("  ")).command.is_none(), "blank is the usual program");
+        let saved = BackendOptions { command: Some("/saved/claude".into()), ..Default::default() };
+        assert_eq!(add_options(&ssh, true, Some(&saved), None).command.as_deref(), Some("/saved/claude"), "another account keeps the command");
+        assert_eq!(add_options(&ssh, true, Some(&saved), Some("/typed")).command.as_deref(), Some("/typed"), "a typed one wins");
+        let local = BackendConfig { ssh_host: None, ..ssh.clone() };
+        assert!(add_options(&local, false, None, Some("/x")).command.is_none(), "a local agent has no remote command");
+    }
 
     /// Settings that couldn't be loaded say so where the person is looking, with the file's name.
     #[test]
