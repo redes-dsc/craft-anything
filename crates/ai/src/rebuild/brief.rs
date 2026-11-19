@@ -331,7 +331,7 @@ pub(super) fn pictures_note(ws: &Workspace, kind: &dyn TargetKind, sees: bool) -
         return None;
     }
     let names = pics.iter().filter_map(|p| p.file_name()).map(|n| format!("reference/{}", n.to_string_lossy())).collect::<Vec<_>>().join(", ");
-    let checked = kind.self_screenshots() && !ws.manifest.own_project();
+    let checked = kind.self_screenshots(ws) && !ws.manifest.own_project();
     if !sees {
         let mut s = format!(
             "The person added {} picture(s) of the original: {names}. They show the result they expect, but you can't look at pictures: build from their request and description, and ask them with core_person_ask what the pictures show (the camera or view, the on-screen layout, the colours) wherever that changes what you build. Don't open or read them.",

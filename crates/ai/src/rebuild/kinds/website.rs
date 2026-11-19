@@ -189,7 +189,7 @@ impl TargetKind for WebsiteKind {
         "a website that looks and behaves like the original"
     }
 
-    fn self_screenshots(&self) -> bool {
+    fn self_screenshots(&self, _ws: &Workspace) -> bool {
         false
     }
 
