@@ -22,7 +22,8 @@ pub fn show(app: &mut CraftApp, ctx: &egui::Context) {
     let resp = egui::Modal::new(egui::Id::new("settings-window"))
         .frame(egui::Frame::new().fill(t.card).corner_radius(t.r_lg()).inner_margin(theme::pad::CARD).stroke(egui::Stroke::new(1.0, t.card_border)))
         .show(ctx, |ui| {
-            ui.set_width((ctx.content_rect().width() - 2.0 * theme::space::XXL).clamp(560.0, 860.0));
+            // No lower limit: at 2× zoom the smallest window is 380 points wide.
+            ui.set_width((ctx.content_rect().width() - 2.0 * theme::space::XXL).min(860.0));
             ui.horizontal(|ui| {
                 ui.label(theme::heading(tr("Settings"), theme::SECTION));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -45,17 +46,9 @@ pub fn show(app: &mut CraftApp, ctx: &egui::Context) {
             }
             ui.add_space(theme::space::MD);
             ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
+                let mut tabs = |ui: &mut Ui| {
                     ui.set_width(150.0);
-                    for (tab, icon, title) in [
-                        (SettingsTab::General, "settings", "General"),
-                        (SettingsTab::Engines, "cpu", "Engines"),
-                        (SettingsTab::Ai, "bot", "AI"),
-                        (SettingsTab::Builds, "hammer", "Builds"),
-                        (SettingsTab::Plugins, "puzzle", "Plugins"),
-                        (SettingsTab::Safety, "shield", "Safety"),
-                        (SettingsTab::About, "info", "About"),
-                    ] {
+                    for (tab, icon, title) in TABS {
                         // About sits at the bottom of the list, level with the end of the page.
                         if tab == SettingsTab::About {
                             ui.add_space((page_height(ctx) - ui.min_rect().height() - TAB_H).max(theme::space::SM));
@@ -89,6 +82,19 @@ pub fn show(app: &mut CraftApp, ctx: &egui::Context) {
                             }
                         }
                     }
+                };
+                // The list scrolls only when the window is shorter than its tabs (2× zoom): a
+                // list that just fits showed its bar on one frame and not the next, moving the
+                // page under the pointer. Top-down inside: an area takes the row's layout.
+                let item_gap = ui.spacing().item_spacing.y;
+                let n = TABS.len() as f32;
+                let list_h = n * TAB_H + (n - 1.0) * item_gap + theme::space::SM;
+                ui.vertical(|ui| {
+                    if page_height(ctx) >= list_h {
+                        tabs(ui);
+                    } else {
+                        egui::ScrollArea::vertical().id_salt("settings-tabs").max_width(150.0).max_height(page_height(ctx)).show(ui, tabs);
+                    }
                 });
                 ui.add_space(theme::space::SM);
                 ui.separator();
@@ -103,10 +109,12 @@ pub fn show(app: &mut CraftApp, ctx: &egui::Context) {
                     // Not shrunk to the tab's content: that gave each tab its own width and put the
                     // scroll bar in a different place on every page.
                     let tab = app.state.settings_tab;
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).min_scrolled_height(h).max_height(h).max_width(w).show(ui, |ui| {
+                    // Sideways too, only when the window is narrower than a row (2× zoom): a
+                    // vertical-only area grows to its widest row and pushed the dialog off screen.
+                    egui::ScrollArea::both().auto_shrink([false, false]).min_scrolled_height(h).max_height(h).max_width(w).show(ui, |ui| {
                         // The bar sits at the edge of the area, so the air between it and the
                         // settings is taken from the settings' side.
-                        ui.set_max_width(content_w - 14.0);
+                        ui.set_max_width((content_w - 14.0).max(0.0));
                         match tab {
                             SettingsTab::General => general(app, ui),
                             SettingsTab::Engines => engines(app, ui),
@@ -127,9 +135,11 @@ pub fn show(app: &mut CraftApp, ctx: &egui::Context) {
 
 fn row(ui: &mut Ui, title: &str, sub: &str, add: impl FnOnce(&mut Ui)) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal(|ui| {
+    // Wrapped: a control wider than the room beside the label goes under it.
+    ui.horizontal_wrapped(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(280.0);
+            // Half a narrow page, so the control beside it still fits.
+            ui.set_width((ui.available_width() / 2.0).min(280.0));
             ui.label(RichText::new(tr(title)).font(theme::medium(theme::BODY)));
             if !sub.is_empty() {
                 ui.add(
@@ -145,10 +155,23 @@ fn row(ui: &mut Ui, title: &str, sub: &str, add: impl FnOnce(&mut Ui)) {
 /// A tab's row in Settings' list.
 const TAB_H: f32 = 34.0;
 
+/// Settings' tabs, top to bottom: the tab, its icon and its title.
+const TABS: [(SettingsTab, &str, &str); 7] = [
+    (SettingsTab::General, "settings", "General"),
+    (SettingsTab::Engines, "cpu", "Engines"),
+    (SettingsTab::Ai, "bot", "AI"),
+    (SettingsTab::Builds, "hammer", "Builds"),
+    (SettingsTab::Plugins, "puzzle", "Plugins"),
+    (SettingsTab::Safety, "shield", "Safety"),
+    (SettingsTab::About, "info", "About"),
+];
+
 /// How tall a tab's page is: as tall as the window allows, so a tab's settings aren't cut off at
-/// the fold.
+/// the fold. A short window (260 points at 2× zoom) gets what's left beside the dialog's heading
+/// and padding, so the dialog stays on screen.
 fn page_height(ctx: &egui::Context) -> f32 {
-    (ctx.content_rect().height() - 220.0).clamp(280.0, 560.0)
+    let h = ctx.content_rect().height();
+    (h - 220.0).clamp(280.0_f32.min(h - 120.0).max(0.0), 560.0)
 }
 
 /// The app's name and version, on every system (only macOS has an About in its menu bar). The
@@ -984,11 +1007,18 @@ pub(crate) fn server_form(app: &mut CraftApp, ui: &mut Ui) {
         let r = ui.add(egui::TextEdit::singleline(text).password(secret).hint_text(tr(hint)).desired_width(width).frame(widgets::text_field_frame_compact(&t)));
         widgets::named(r, &tr(name));
     };
-    ui.horizontal(|ui| {
+    let mut fields = |ui: &mut Ui| {
         field(ui, &mut form.name, "name, e.g. Studio box", 150.0, "AI name", false);
-        let w = ui.available_width() - FRAME;
+        let w = (ui.available_width() - FRAME).max(120.0);
         field(ui, &mut form.address, "address, e.g. http://192.168.1.20:11434/v1", w, "Server address", false);
-    });
+    };
+    // Side by side when both fit; otherwise the address gets a line of its own (2× zoom), since a
+    // text field shrinks to the room left and the name alone can fill the row.
+    if ui.available_width() >= 150.0 + 120.0 + 2.0 * FRAME + ui.spacing().item_spacing.x {
+        ui.horizontal(fields);
+    } else {
+        fields(ui);
+    }
     // A model picked from one server's list goes once the address is another, before Add can send
     // it there (a model the server hasn't got may start a download). One typed by hand stays.
     if let Some((from, picked)) = form.picked.take() {

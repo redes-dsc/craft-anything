@@ -873,6 +873,14 @@ preset narrows the bar to 2 px at rest, so the thumb showed only on hover. When 
 library's colours, check every widget that borrows them, in both themes, and test contrast with
 numbers (3:1 for parts you interact with), not by eye.
 
+**A width limit that a scroll area ignored.** Settings was given the window's width at 2× zoom
+and still ran off it: an egui `ScrollArea::vertical()` grows to its widest row (a 280-point label
+beside a switch), and one placed straight in a `horizontal` row laid its tabs out side by side.
+Put a scroll area in a top-down `ui.vertical`, let it scroll sideways (`both()`) when a row may be
+wider than the space, and test where the parts land in the smallest window at 2×, not only that
+they draw. A list that exactly fills its scroll area showed its bar on one frame and not the next,
+so the page beside it moved and a click missed: scroll only when the content can't fit.
+
 **Files read while drawing.** The Project screen parsed `package.json` 2–4 times a frame, listed
 the reference pictures and checked screenshot files on every repaint, and read the side panel's
 files on every frame a build event arrived; on a slow or network drive the window would freeze.

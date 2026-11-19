@@ -3723,3 +3723,56 @@ fn settings_about_shows_the_apps_version() {
         h.step();
     }
 }
+
+/// At 2× zoom in the smallest window (380×260 points), Settings fits: its close button, every tab
+/// and the page are on screen, and the last tab is reached by scrolling the list.
+#[test]
+fn settings_fits_the_smallest_window_at_double_zoom() {
+    let mut h = harness_sized(egui::vec2(760.0, 520.0), || demo::app(demo::engine(Mode::Experienced, true)));
+    h.ctx.set_zoom_factor(2.0);
+    h.state_mut().state.settings_open = true;
+    h.run_steps(4);
+    let screen = h.ctx.content_rect();
+    assert_eq!(screen.size(), egui::vec2(380.0, 260.0));
+    let inside = |r: egui::Rect| r.left() >= screen.left() && r.top() >= screen.top() && r.right() <= screen.right() && r.bottom() <= screen.bottom();
+    // The title bar has a Close too; the dialog's must be on screen as well.
+    for close in h.query_all_by_label("Close").map(|n| n.rect()) {
+        assert!(inside(close), "Close at {close:?} is off the {screen:?} window");
+    }
+    for tab in ["General", "Engines", "AI"] {
+        let r = h.get_by_label(tab).rect();
+        assert!(inside(r), "{tab} at {r:?} is off the {screen:?} window");
+    }
+    h.get_by_label("About").scroll_to_me();
+    h.run_steps(3);
+    let about = h.get_by_label("About").rect();
+    assert!(inside(about), "About at {about:?} isn't reached in the {screen:?} window");
+    h.get_by_label("About").click();
+    h.run_steps(3);
+    use craft_anything_ui_egui::state::SettingsTab;
+    assert_eq!(h.state().state.settings_tab, SettingsTab::About);
+    // The AI tab's server address keeps room to type in, though the name fills the row.
+    h.state_mut().state.settings_tab = SettingsTab::Ai;
+    h.run_steps(3);
+    let (name, address) = (h.get_by_label("AI name").rect(), h.get_by_label("Server address").rect());
+    assert!(address.top() >= name.bottom() && address.width() >= name.width() - 1.0, "address {address:?} beside name {name:?}");
+    // At 1× in the same window no tab's page needs to scroll sideways. The zoom applies on the
+    // next pass, so lay it out before clicking, and check each click landed.
+    h.ctx.set_zoom_factor(1.0);
+    h.run_steps(3);
+    for (tab, id) in [
+        ("General", SettingsTab::General),
+        ("Engines", SettingsTab::Engines),
+        ("AI", SettingsTab::Ai),
+        ("Builds", SettingsTab::Builds),
+        ("Plugins", SettingsTab::Plugins),
+        ("Safety", SettingsTab::Safety),
+        ("About", SettingsTab::About),
+    ] {
+        h.get_by_label(tab).click();
+        h.run_steps(3);
+        assert_eq!(h.state().state.settings_tab, id, "the click on {tab} landed");
+        let sideways = h.query_all_by_role(egui::accesskit::Role::ScrollBar).map(|n| n.rect()).find(|r| r.width() > r.height());
+        assert!(sideways.is_none(), "{tab} scrolls sideways at {sideways:?}");
+    }
+}
