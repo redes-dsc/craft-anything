@@ -75,8 +75,8 @@ fn own_unity_check(app: &Path, editor: &Path, stop: &CheckStop) -> (bool, String
 fn own_build(app: &Path, tool: &stacks::Toolchain, stop: &CheckStop) -> (bool, String) {
     match run_tool(app, tool, &tool.build, 2 * 60, stop) {
         Ok((true, _)) => (true, format!("`{}` passed.", tool.build.join(" "))),
-        Ok((false, out)) => (false, format!("Build failed: {}", error_lines(&out))),
-        Err(e) => (false, format!("Couldn't run the build: {e}")),
+        Ok((false, out)) => (false, format!("Build failed (`{}`): {}", tool.build.join(" "), error_lines(&out))),
+        Err(e) => (false, format!("Couldn't run the build (`{}`): {e}", tool.build.join(" "))),
     }
 }
 
@@ -445,8 +445,8 @@ mod tests {
 
     /// #1837: with a Rust project's Cargo.toml left beside the Python it was rewritten in, a
     /// Python build isn't checked with Cargo, and a build is still run (Python's, the only other
-    /// toolchain there). Whether Python is installed doesn't matter here: either way, the note is
-    /// a toolchain build's outcome and says nothing about Cargo.
+    /// toolchain there). Whether Python is installed doesn't matter here: every outcome's note
+    /// names the command that was chosen.
     #[test]
     fn a_build_moved_to_python_is_not_checked_with_cargo() {
         let (d, stop) = (tempfile::tempdir().unwrap(), CheckStop::default());
@@ -454,8 +454,7 @@ mod tests {
         std::fs::write(d.path().join("pyproject.toml"), "[project]\nname = \"game\"\n").unwrap();
         let note = build_check(d.path(), "app/", "Python", None, &stop).1;
         assert!(!note.to_lowercase().contains("cargo"), "{note}");
-        let ran = note.ends_with("` passed.") || note.starts_with("Build failed:") || note.starts_with("Couldn't run the build:");
-        assert!(ran, "a build ran, not \"nothing to build\": {note}");
+        assert!(note.contains("-m compileall"), "Python's build was chosen, not \"nothing to build\": {note}");
         let note = build_check(d.path(), "app/", "Rust + macroquad", None, &stop).1;
         assert!(note.to_lowercase().contains("cargo"), "a Rust stack still builds with Cargo: {note}");
     }
