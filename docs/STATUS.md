@@ -787,7 +787,8 @@ launch or preview was run for this documentation correction.
   doesn't ask at all, so a Clean room build's reads aren't checked either; outside a build it runs
   with its writing tools, shell and code execution switched off, and Maki refuses anything else
   that would ask (an MCP server's tools, in subagents too) unless the person allowed it in Maki's
-  own permissions. It hasn't been run as a `maki -p` builder here.
+  own permissions. Its message goes on stdin, not in argv, so a long one passes Windows'
+  command-line limit (#402). It hasn't been run as a `maki -p` builder here.
 - Claude Code is fully wired as a builder; Codex works through its own flags (our tools are pre-approved for
   `codex exec` and every tool permitted by the current mode is listed from startup, see `docs/codex.md`)
   and resumes its reported thread on follow-up turns and when reopening a saved session.

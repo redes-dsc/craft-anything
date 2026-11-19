@@ -1226,12 +1226,16 @@ Owner: open · Status: in progress
       V1 and V2), so a long one can't pass Windows' command-line limit (#402), as Claude Code, Codex,
       Gemini CLI and DeepSeek Harness already do
       — claimed: FuryNocturn, branch feature/r2.2-message-off-argv
-- [ ] Hermes, Maki, Devin and Antigravity still take the message in argv (`prompt_on_stdin`),
+- [ ] Hermes, Devin and Antigravity still take the message in argv (`prompt_on_stdin`),
       and Aider still does over SSH, so a long one can pass Windows' command-line limit (#402).
       Aider over SSH needs the file written on the remote host. Hermes' `-z` takes its message
       only in argv; `hermes chat -Q --query-file -` reads it from stdin, but that is the chat
-      path, not `-z`'s one-shot run, so check what it prints and approves before moving to it.
-      For the others, find in their source whether they read a message from stdin or a file
+      path, not `-z`'s one-shot run (only `-z` marks the run unattended), so check what it prints
+      and approves before moving to it. Devin documents `--prompt-file <FILE>` but not whether
+      `-p` reads it; Antigravity's `-p` reportedly ignores stdin. Neither source is public, so
+      both need a check on a real install
+- [x] Maki: `maki -p` with no prompt argument reads the whole message from stdin (its
+      `src/print.rs`), so it goes there now (#402). Not run with a real Maki here
 - [ ] A note sent during a build reaches the builder at its next step on other coding agents with
       tool hooks (Claude Code only today)
 - [x] A note sent during a build reaches an API-backend builder between tool calls, not only after
