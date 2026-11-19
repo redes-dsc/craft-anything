@@ -3695,6 +3695,73 @@ fn decompiling_once_is_remembered_by_the_project() {
     assert!(Workspace::open(&ws.root).unwrap().manifest.decompiled, "a later run reads it from craft.json");
 }
 
+/// A builder without a per-run MCP server (`tool_server: Given::No`) runs CLI subcommands in its
+/// shell whose `ToolStarted` is `"Bash"`, writing evidence straight into `ws.investigation_dir()`.
+struct ShellDecompiles {
+    investigation_dir: PathBuf,
+    events: Vec<AgentEvent>,
+}
+
+impl Conversation for ShellDecompiles {
+    fn send(&mut self, _text: &str) {
+        let project = craft_anything_engine::project::Project::open(&self.investigation_dir).unwrap();
+        let ev = craft_anything_evidence::EvidenceBuilder::new(
+            craft_anything_engine::tools::native_function::PSEUDOCODE_TOOL,
+            craft_anything_evidence::Subject::default(),
+            craft_anything_evidence::Environment::builtin(true),
+        )
+        .result(json!({"function": "entry"}))
+        .build()
+        .unwrap();
+        project.store_evidence(&ev).unwrap();
+        self.events = vec![
+            AgentEvent::ToolStarted { call_id: "1".into(), tool: "Bash".into(), input: json!({"command": "craft-anything ..."}) },
+            AgentEvent::TextDelta { text: "Inspected via CLI.".into() },
+            AgentEvent::TurnDone { backend: "test".into(), input_tokens: 0, output_tokens: 0, tokens_unknown: false, cost_usd: None, cost_is_estimate: false },
+        ];
+    }
+    fn poll(&mut self) -> Vec<AgentEvent> {
+        std::mem::take(&mut self.events)
+    }
+    fn answer_consent(&mut self, _call_id: &str, _allow: bool) {}
+    fn stop(&mut self) {}
+    fn is_busy(&self) -> bool {
+        !self.events.is_empty()
+    }
+}
+
+#[test]
+fn shell_decompile_evidence_in_investigation_marks_workspace_decompiled() {
+    let d = tempfile::tempdir().unwrap();
+    let ws_target = TargetRef::Local { path: d.path().join("game.exe") };
+    let mut ws = Workspace::create(d.path(), "Sim", "Recreate this game", ws_target).unwrap();
+    let project = craft_anything_engine::project::Project::create(&ws.investigation_dir(), "Sim", craft_anything_engine::project::Purpose::default()).unwrap();
+    let engine = Arc::new(Engine::new(craft_anything_engine::testing::session()));
+    engine.session().open_project(project).unwrap();
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let mut w = Worker {
+        wake: Default::default(),
+        engine,
+        tx,
+        stop: CancelToken::default(),
+        preview: Arc::default(),
+        seen: HashSet::new(),
+        inbox: Inbox::new(ws.inbox_dir()),
+        editor: None,
+        notes: Arc::default(),
+        feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
+        assets: false,
+        usage: None,
+        self_check: None,
+        reset_progress_after_notes: false,
+    };
+    let mut builder = ShellDecompiles { investigation_dir: ws.investigation_dir(), events: Vec::new() };
+    w.turn(&mut ws, &mut builder, "Build it.", true, None).unwrap();
+    assert!(ws.manifest.decompiled, "investigation ledger evidence marks workspace decompiled even without MCP ToolStarted");
+}
+
 /// A builder on an API model that asks for consent: a Build tool, then a plugin's tool.
 #[derive(Default)]
 struct AsksConsent {
@@ -3762,20 +3829,23 @@ fn a_build_says_why_it_refused_a_tool_that_needs_consent() {
 }
 
 /// A later request's run, reading the project from disk, reminds only a builder that never
-/// decompiled in it, and only in Deep mode on a program.
+/// decompiled in it, and only in Deep mode on a program with a per-run MCP tool server.
 #[test]
 fn a_later_request_is_reminded_only_when_nothing_was_decompiled() {
     let d = tempfile::tempdir().unwrap();
     let program = TargetRef::Local { path: d.path().join("game.exe") };
     let mut ws = Workspace::create(d.path(), "Sim", "Recreate this game", program).unwrap();
     let reopened = |ws: &Workspace| Workspace::open(&ws.root).unwrap().manifest;
-    assert!(needs_decompile_reminder(true, &reopened(&ws)), "nothing decompiled yet");
-    assert!(!needs_decompile_reminder(false, &reopened(&ws)), "Clean room never decompiles");
+    assert!(needs_decompile_reminder(true, true, &reopened(&ws)), "nothing decompiled yet");
+    assert!(!needs_decompile_reminder(true, false, &reopened(&ws)), "shell-only builder without MCP server is not forced into DECOMPILE_FIRST");
+    assert!(!needs_decompile_reminder(false, true, &reopened(&ws)), "Clean room never decompiles");
+    let gemini = crate::cli_agents::AgentAdapters::built_in().for_backend("gemini", &crate::BackendOptions::default());
+    assert_eq!(crate::cli_agents::grants::grants(gemini.as_ref()).tool_server, crate::cli_agents::grants::Given::No);
     ws.manifest.decompiled = true;
     ws.save().unwrap();
-    assert!(!needs_decompile_reminder(true, &reopened(&ws)), "decompiled in an earlier run");
+    assert!(!needs_decompile_reminder(true, true, &reopened(&ws)), "decompiled in an earlier run");
     let none = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
-    assert!(!needs_decompile_reminder(true, &none.manifest), "no program to decompile");
+    assert!(!needs_decompile_reminder(true, true, &none.manifest), "no program to decompile");
 }
 
 #[test]

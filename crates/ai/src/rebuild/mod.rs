@@ -524,11 +524,21 @@ pub fn preview(ws: &Workspace) -> Result<StaticServer, ToolError> {
     serve_dir(&site).map_err(|e| ToolError::io(site.display(), e))
 }
 
-/// Deep mode on a program requires decompiling, so a build turn that ends without the builder
-/// ever having decompiled in this project gets [`DECOMPILE_FIRST`] (once per run). A decompile in
-/// an earlier run counts: each request from the person starts a new run.
-fn needs_decompile_reminder(deep: bool, manifest: &craft_anything_engine::workspace::Manifest) -> bool {
-    deep && matches!(manifest.target, TargetRef::Local { .. }) && !manifest.decompiled
+/// Deep mode on a program requires decompiling when the builder runs with a per-run MCP tool
+/// server (`api_loop` or `tool_server: Given::Yes`), so a build turn that ends without having
+/// decompiled in this project gets [`DECOMPILE_FIRST`] (once per run). Builders with `tool_server:
+/// Given::No` fall back to shell subcommands whose tool events never carry the MCP tool name, so
+/// they are not forced into an MCP-phrased reminder they cannot execute via MCP. A decompile in an
+/// earlier run (or recorded as evidence in the investigation ledger) counts.
+fn needs_decompile_reminder(deep: bool, has_tool_server: bool, manifest: &craft_anything_engine::workspace::Manifest) -> bool {
+    deep && has_tool_server && matches!(manifest.target, TargetRef::Local { .. }) && !manifest.decompiled
+}
+
+/// Returns `true` when the active investigation ledger already contains decompile evidence for
+/// `ws` (e.g. written by CLI subcommands run outside `AgentEvent::ToolStarted`).
+fn investigation_has_decompile_evidence(session: &craft_anything_engine::Session, ws: &Workspace) -> bool {
+    session.project.as_ref().is_some_and(|project| project.root == ws.investigation_dir())
+        && session.ledger().any(|ev| ev.operation == craft_anything_engine::tools::native_function::PSEUDOCODE_TOOL)
 }
 
 struct Worker {
@@ -880,6 +890,9 @@ impl Worker {
         // A coding agent resumes its own session; our loop resumes its kept transcript.
         let resumable = api.as_ref().is_none_or(crate::agent::ApiConversation::resumed);
         let api_loop = api.is_some();
+        let has_tool_server = api_loop
+            || crate::cli_agents::grants::grants(opts.adapters.for_backend(&entry.config.model, &entry.options).as_ref()).tool_server
+                == crate::cli_agents::grants::Given::Yes;
         // Agent apps open pictures with their Read tool; the API loop sends text only, so its
         // builder is told what to use instead (R5.4: models that can see get pictures later).
         let sees_pictures = !api_loop;
@@ -1040,7 +1053,11 @@ impl Worker {
                     prompt = p;
                     continue;
                 }
-                if !reminded && needs_decompile_reminder(deep, &ws.manifest) {
+                if !ws.manifest.decompiled && investigation_has_decompile_evidence(&self.engine.session(), ws) {
+                    ws.manifest.decompiled = true;
+                    ws.save()?;
+                }
+                if !reminded && needs_decompile_reminder(deep, has_tool_server, &ws.manifest) {
                     reminded = true;
                     prompt = DECOMPILE_FIRST.to_string();
                     continue;
@@ -1351,7 +1368,9 @@ impl Worker {
             for e in agent.poll() {
                 refresh |= matches!(e, AgentEvent::ToolFinished { .. });
                 if matches!(e, AgentEvent::TurnDone { .. }) {
-                    refresh_investigation(&mut self.engine.session(), ws);
+                    let mut session = self.engine.session();
+                    refresh_investigation(&mut session, ws);
+                    ws.manifest.decompiled |= investigation_has_decompile_evidence(&session, ws);
                     refresh = false;
                 }
                 match &e {
