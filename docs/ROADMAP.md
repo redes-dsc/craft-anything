@@ -1956,11 +1956,21 @@ Gaps found while using the app for real projects.
       over SSH (a tunnelled model) builds on this computer (review of #1846): skip it only
       when the builder's tools run on the other computer (`tools_run_remotely`)
       — claimed: justinjohn0306, branch bugfix/r2.9-cargo-check-api-over-ssh
-- [ ] A project moved to another stack mid-build keeps its recorded stack (only package.json
+- [x] A project moved to another stack mid-build keeps its recorded stack (only package.json
       updates it), and the build check runs `cargo build` whenever app/Cargo.toml is there, so
       a Rust project rewritten in Python is still checked with Cargo until the old manifest is
       moved out (#1837): record the stack from what was built for every toolchain, and check
-      with that
+      with that. Done as: a follow-up naming a stack in another language records it once that
+      language's files are in app/, and the checks use the recorded stack's toolchain
+      — claimed: justinjohn0306, branch bugfix/r2.9-check-the-stack-that-was-built
+- [ ] A move is recorded only when the turn that made it finishes: a turn cut off (a stop, a
+      crash) and then retried with no message keeps the old stack, so the check can still use
+      the old language's manifest (review of #2099). Keep the requested stack until a turn
+      ends, or read it from the files the build left
+- [x] A move to a language with no stack in stacks.toml (Go, .NET, Java) is still checked with
+      the old manifest's toolchain while it's there: only a follow-up naming a stack moves the
+      record. Go, C# (.NET) and Java (Maven or Gradle) now have stacks; the other toolchains
+      (Make) have no language to ask for
 - [x] One design system for the desktop app: a typed scale (text sizes, gaps, padding, icon and
       control sizes) in `theme.rs`, one set of buttons (primary, secondary, ghost, danger),
       switches and fields in `widgets.rs`, and every screen moved onto them, so sizes and spacing

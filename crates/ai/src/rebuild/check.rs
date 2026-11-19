@@ -49,7 +49,7 @@ pub(super) fn own_build_check(app: &Path, place: &str, stack: &str, editor: Opti
     if let (Some(game::Builder::Unity), Some(ed)) = (engine, editor) {
         return own_unity_check(app, ed, stop);
     }
-    match stacks::toolchain_in(app).filter(|_| engine.is_none()) {
+    match stacks::toolchain_for(stack, app).filter(|_| engine.is_none()) {
         Some(tool) => own_build(app, tool, stop),
         None if engine.is_some() || static_site(app) => build_check(app, place, stack, editor, stop),
         None => (true, "Nothing was built: Craft Anything doesn't know how to build this kind of project.".into()),
@@ -75,8 +75,8 @@ fn own_unity_check(app: &Path, editor: &Path, stop: &CheckStop) -> (bool, String
 fn own_build(app: &Path, tool: &stacks::Toolchain, stop: &CheckStop) -> (bool, String) {
     match run_tool(app, tool, &tool.build, 2 * 60, stop) {
         Ok((true, _)) => (true, format!("`{}` passed.", tool.build.join(" "))),
-        Ok((false, out)) => (false, format!("Build failed: {}", error_lines(&out))),
-        Err(e) => (false, format!("Couldn't run the build: {e}")),
+        Ok((false, out)) => (false, format!("Build failed (`{}`): {}", tool.build.join(" "), error_lines(&out))),
+        Err(e) => (false, format!("Couldn't run the build (`{}`): {e}", tool.build.join(" "))),
     }
 }
 
@@ -118,6 +118,7 @@ pub(super) fn build_check(app: &Path, place: &str, stack: &str, editor: Option<&
     let app_abs = craft_anything_engine::workspace::absolute(app);
     let app_s = app_abs.display().to_string();
     let built = || packaged_program(&app_abs.join("Build")).is_some();
+    let builds_with = |name: &str| stacks::toolchain_for(stack, app).is_none_or(|t| t.name == name);
     let result: Result<(bool, String), String> = match (engine_for(stack, app), editor) {
         (Some(game::Builder::Unity), Some(ed)) => {
             if !app.join("Assets").is_dir() {
@@ -171,10 +172,12 @@ pub(super) fn build_check(app: &Path, place: &str, stack: &str, editor: Option<&
                 (ok && !bad, out)
             })
         }
-        _ if app.join("Cargo.toml").is_file() => run(Path::new("cargo"), &["build".into(), "--quiet".into()], 2 * 60),
-        _ if app.join("package.json").is_file() => run(Path::new(if cfg!(windows) { "npm.cmd" } else { "npm" }), &["run".into(), "build".into()], 2 * 60),
+        _ if app.join("Cargo.toml").is_file() && builds_with("Rust") => run(Path::new("cargo"), &["build".into(), "--quiet".into()], 2 * 60),
+        _ if app.join("package.json").is_file() && builds_with("Node.js") => {
+            run(Path::new(if cfg!(windows) { "npm.cmd" } else { "npm" }), &["run".into(), "build".into()], 2 * 60)
+        }
         (None, _) => {
-            return stacks::toolchain_in(app).map_or_else(
+            return stacks::toolchain_for(stack, app).map_or_else(
                 || {
                     if static_site(app) {
                         (true, "Nothing to build: a static site.".into())
@@ -438,6 +441,22 @@ mod tests {
         assert_eq!(engine_for("Electron", app), None);
         std::fs::write(app.join("Cargo.toml"), "").unwrap();
         assert_eq!(engine_for("Rust + macroquad", app), None);
+    }
+
+    /// #1837: with a Rust project's Cargo.toml left beside the Python it was rewritten in, a
+    /// Python build isn't checked with Cargo, and a build is still run (Python's, the only other
+    /// toolchain there). Whether Python is installed doesn't matter here: every outcome's note
+    /// names the command that was chosen.
+    #[test]
+    fn a_build_moved_to_python_is_not_checked_with_cargo() {
+        let (d, stop) = (tempfile::tempdir().unwrap(), CheckStop::default());
+        std::fs::write(d.path().join("Cargo.toml"), "[package]\nname = \"game\"\n").unwrap();
+        std::fs::write(d.path().join("pyproject.toml"), "[project]\nname = \"game\"\n").unwrap();
+        let note = build_check(d.path(), "app/", "Python", None, &stop).1;
+        assert!(!note.to_lowercase().contains("cargo"), "{note}");
+        assert!(note.contains("-m compileall"), "Python's build was chosen, not \"nothing to build\": {note}");
+        let note = build_check(d.path(), "app/", "Rust + macroquad", None, &stop).1;
+        assert!(note.to_lowercase().contains("cargo"), "a Rust stack still builds with Cargo: {note}");
     }
 
     #[test]
