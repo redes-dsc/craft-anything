@@ -1684,6 +1684,11 @@ Gaps found while using the app for real projects.
       resize edges under a see-through title bar, which is 32 pt there so the buttons sit centred
       in it (#20)
 - [ ] macOS: the app's icon is bigger than the system's (#20)
+- [x] Windows 11: the window can't be dragged onto a screen with different scaling; it stops
+      half-way and snaps back (#1814). winit 0.30's DPI-change handler moved it back onto the
+      screen it came from (upstream rust-windowing/winit#4041, fixed only for 0.31 in #4341):
+      `vendor/winit` backports #4341. Not run on two screens with different scaling here
+      — claimed: justinjohn0306, branch bugfix/r2.9-window-across-scaled-screens
 - [ ] Show a command's output while it runs: Claude Code reports a tool's result only when it
       ends, so a long `cargo build` is one quiet line until then. Watching the agent's child
       processes from outside could say what's running and for how long
