@@ -562,7 +562,8 @@ pub struct PluginForm {
     pub id: String,
     /// A command (a local server), an https:// address (a remote one) or a `.wasm` file.
     pub place: String,
-    /// Arguments for a command, separated by spaces.
+    /// Arguments for a command, separated by spaces, or a JSON array of strings as other
+    /// clients' configuration files write them (the only way to give an argument with a space).
     pub args: String,
 }
 
@@ -578,7 +579,10 @@ impl PluginForm {
         } else if place.to_ascii_lowercase().ends_with(".wasm") {
             serde_json::json!({"id": id, "wasm": place})
         } else {
-            serde_json::json!({"id": id, "command": place, "args": self.args.split_whitespace().collect::<Vec<_>>()})
+            // A pasted JSON array is the arguments as written; split on spaces it would leave
+            // brackets, quotes and commas in them (#2153).
+            let args = serde_json::from_str::<Vec<String>>(self.args.trim()).unwrap_or_else(|_| self.args.split_whitespace().map(str::to_owned).collect());
+            serde_json::json!({"id": id, "command": place, "args": args})
         })
     }
 }
@@ -649,6 +653,14 @@ mod tests {
         assert_eq!(f("docs", " https://mcp.example.com/mcp ", "ignored"), Some(serde_json::json!({"id": "docs", "url": "https://mcp.example.com/mcp"})));
         assert_eq!(f("fs", "npx", "-y  @scope/server  /tmp"), Some(serde_json::json!({"id": "fs", "command": "npx", "args": ["-y", "@scope/server", "/tmp"]})));
         assert_eq!(f("words", r"C:\plugins\Words.WASM", "ignored"), Some(serde_json::json!({"id": "words", "wasm": r"C:\plugins\Words.WASM"})));
+        // #2153: a JSON array pasted from another client's configuration is the arguments, spaces
+        // and backslashes included; anything else that starts with a bracket is split as before.
+        assert_eq!(
+            f("ls", "server", r#" ["--stdio", "--workspace", "C:\\my project"] "#),
+            Some(serde_json::json!({"id": "ls", "command": "server", "args": ["--stdio", "--workspace", r"C:\my project"]}))
+        );
+        assert_eq!(f("ls", "server", "[]"), Some(serde_json::json!({"id": "ls", "command": "server", "args": []})));
+        assert_eq!(f("ls", "server", "[1, 2] --x"), Some(serde_json::json!({"id": "ls", "command": "server", "args": ["[1,", "2]", "--x"]})));
         assert_eq!(f("", "npx", ""), None);
         assert_eq!(f("x", "  ", ""), None);
     }
