@@ -568,6 +568,9 @@ struct UsageClock {
 /// How often a long agent turn saves the time worked so far, so a crash loses little of it.
 const USAGE_FLUSH: Duration = Duration::from_secs(60);
 
+/// How long a turn that ends early waits for the session to show what its finished tools wrote.
+const LEAVING_REFRESH_WAIT: Duration = Duration::from_secs(2);
+
 /// Record `e` in the feed, send it and wake the window, under one lock.
 fn emit_event(feed: &Mutex<feed::FeedLog>, tx: &Sender<RunEvent>, wake: &Wake, e: RunEvent) {
     let mut feed = feed.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1407,7 +1410,25 @@ impl Worker {
             for line in newly_said(&ws.inbox_dir(), &mut said) {
                 self.emit(RunEvent::Step { step: Step::Build, text: line });
             }
-            self.answer_self_checks(ws)?;
+            if let Err(error) = self.answer_self_checks(ws) {
+                // Leaving before `TurnDone`: what the finished tools wrote still reaches the view,
+                // but a stop never waits long on a tool that holds the session (#1746 review).
+                if refresh {
+                    let until = Instant::now() + LEAVING_REFRESH_WAIT;
+                    loop {
+                        if let Some(mut session) = self.engine.try_session() {
+                            refresh_investigation(&mut session, ws);
+                            break;
+                        }
+                        if Instant::now() >= until {
+                            log::warn!("Left without refreshing the investigation: another tool still holds the session.");
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                return Err(error);
+            }
             if self.usage.as_ref().is_some_and(|c| c.since.elapsed() >= USAGE_FLUSH) {
                 self.record_usage(None);
             }
