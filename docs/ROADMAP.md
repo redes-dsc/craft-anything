@@ -262,6 +262,10 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       keys) when rsa 0.10 lands, and unmaintained `zbus_names`/`zvariant` (Linux-only via keyring
       and accesskit) when those move on. `deny.toml`'s comments pointed at R0.3, which never held
       them; they name this line now — claimed: kuseidos, branch docs/r5.2-deny-points-at-its-own-roadmap-line
+- [x] The lockfile held wasmtime 49.0.4 (the optional `wasm-plugins` runtime), which has three
+      advisories fixed in later 49.0 patches (#2137). Cargo.lock moves the wasmtime, pulley and
+      cranelift family to 49.0.6 / 0.136.6; `Cargo.toml` already allowed it and no source changed
+      — claimed: bflatastic, branch chore/wasmtime-49.0.5
 - [ ] Check whether the release workflows still run actions that target Node.js 20. None is named
       here any more: every job calls `storytold/craft-common-actions@main`, so a fix belongs there
 - [x] Correct STATUS.md's obsolete GUI-only limit: document the shared project feed, engine
