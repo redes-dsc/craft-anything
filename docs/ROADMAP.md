@@ -322,6 +322,12 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       `self_cli_path` no longer found the CLI and the two rebuild tests that start it failed on
       `main` and every pull request. It now finds the CLI from that folder too
       — claimed: bflatastic, branch bugfix/r5.2-cli-in-new-build-dir
+- [x] `cargo fmt --all` (and so `cargo xtask ci`) fails on Windows with "The filename or extension
+      is too long" (os error 206): it hands rustfmt every target's root file in one command, about
+      31,000 characters of `\\?\` paths, past Windows' 32,767 limit, and one crate (formats, ~22,000)
+      will reach it alone. Format through `cargo xtask fmt [--check]`, which runs rustfmt on the same
+      files in batches that fit, and have `ci` use it
+      — claimed: FuryNocturn, branch chore/r5.2-fmt-on-windows
 
 ### R5.3 A builder that can't make progress stops
 Owner: open · Status: todo
